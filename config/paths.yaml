@@ -1,0 +1,27 @@
+# All machine-specific paths live here.
+#
+# Each subject belongs to a POOL. A pool defines where its data lives and which
+# subject list it draws from. The labeled and study datasets are separate and
+# may sit on different filesystems, so each pool has its own data_root/patterns.
+# "{subject}" expands to a BIDS label, e.g. sub-00001. Raw MRI is never copied
+# into the repo.
+
+pools:
+  # Labeled set: NM images + expert SN masks. Used by the training/exam phases.
+  labeled:
+    data_root: /path/to/labeled_dataset
+    image_pattern: "{subject}/anat/{subject}_acq-NM_T1w.nii.gz"
+    expert_mask_pattern: "derivatives/expert/{subject}/{subject}_acq-NM_label-SN_mask.nii.gz"
+    subjects: subjects_labeled.txt
+
+  # Study set: unlabeled NM images. Used by the production phase.
+  study:
+    data_root: /data/nmMRI_study_bids
+    image_pattern: "{subject}/anat/{subject}_acq-NM_T1w.nii.gz"
+    subjects: subjects_study.txt
+
+# Where the multi-rater segmentation workspace is built (outside the repo).
+workspace_root: /path/to/ManSeg_Workspace
+
+# Where QC metrics and summaries are written.
+qc_output_root: /path/to/ManSeg_Workspace/qc

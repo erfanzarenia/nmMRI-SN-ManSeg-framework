@@ -1,0 +1,6 @@
+# Subjects WITH an expert SN mask (labeled pool), used by phases 1-4.
+# One subject label per line, as named in the dataset; '#' starts a comment.
+# Must be disjoint from the study list.
+L01
+L02
+L03

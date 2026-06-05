@@ -1,0 +1,100 @@
+# Workflow Overview
+
+Manual segmentation of the substantia nigra (SN) on neuromelanin-sensitive MRI
+(NM-MRI). The work is organized into five phases that gradually train raters,
+ensure consistency, and produce reliable data for analysis. Each phase builds on
+the previous one; later phases are not opened until the earlier ones are
+complete.
+
+## Big picture
+
+- Early phases (1–2): learning and calibration against expert masks.
+- Middle phases (3–4): a blind rehearsal, then the reliability measurement.
+- Final phase (5): generation of the research dataset at scale.
+
+In one line: phase 1 learns what correct looks like, phase 2 calibrates, phase 3
+rehearses blind, phase 4 measures reliability, phase 5 scales.
+
+## Phases
+
+| Phase | Name       | Pool    | Expert mask | Rater output         | Assignment  |
+|-------|------------|---------|-------------|----------------------|-------------|
+| 1     | Playground | labeled | yes         | `<INIT>_mask_a1/a2`  | shared      |
+| 2     | Practice   | labeled | yes         | `<INIT>_mask_a1/a2`  | shared      |
+| 3     | Mock exam  | labeled | no          | `<INIT>_mask`        | shared      |
+| 4     | Exam       | labeled | no          | `<INIT>_mask`        | shared      |
+| 5     | Production | study   | no          | `<INIT>_mask`        | partitioned |
+
+- **shared** — every rater segments the same subjects (enables inter-rater
+  comparison).
+- **partitioned** — subjects are divided across raters (scale; each subject
+  segmented once), with a hidden overlap kept for reliability (see Phase 5).
+- **labeled** vs **study** — two disjoint subject pools that live in different
+  places (with / without expert masks). Each is a *pool* in
+  [`config/paths.yaml`](../config/paths.yaml).
+
+Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) ·
+[phase4](phase4.md) · [phase5](phase5.md). Tool:
+[itksnap_instructions](itksnap_instructions.md). QC: [qc](qc.md).
+
+## Scan naming and blinding
+
+- Source scans are relabeled to anonymized workspace IDs (e.g. `sub-0001`) that
+  do **not** match the source IDs, so a rater cannot trace a scan back to the
+  source dataset or its expert mask. The assignment is random but reproducible
+  from the seed in [`config/phases.yaml`](../config/phases.yaml).
+- Each workspace subject folder holds `image.nii.gz` (plus `expert_mask.nii.gz`
+  in the expert-guided phases). Rater outputs are `<INIT>_mask.nii.gz` (single
+  attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts).
+- The workspace → source key is written to `config/subjects_split.json`. It is
+  kept private, never shared with raters, and is git-ignored.
+
+## Workspace layout
+
+`make_workspace.py` builds this tree under `workspace_root` (outside the repo),
+identically for every phase, and copies the rater-facing guides into a shared
+`docs/` folder so they sit next to the data:
+
+```
+<workspace_root>/
+  docs/                            # copies of this overview, the phase guides,
+                                   # the ITK-SNAP guide, and the SN label file
+  <phaseN_name>/
+    <RATER>/
+      inputs/<sub-XXXX>/image.nii.gz [+ expert_mask.nii.gz]
+      outputs/<sub-XXXX>/          # rater saves masks here
+```
+
+## Run
+
+```bash
+conda env create -f environment.yml
+conda activate nmmri-manseg
+
+# 1. Configure config/: paths.yaml (pools + workspace), raters.json,
+#    phases.yaml, and the subject lists.
+# 2. Assign subjects to phases/raters (deterministic; seed from phases.yaml).
+python scripts/split_subjects.py
+
+# 3. Build the workspace (--dry-run previews the tree first).
+python scripts/make_workspace.py
+
+# 4. Raters segment in ITK-SNAP (see itksnap_instructions.md).
+
+# 5. QC + inter-rater analysis, run centrally (exam shown).
+python scripts/qc_metrics.py --phase phase4
+python scripts/interrater_analysis.py --phase phase4
+```
+
+## Rules
+
+These apply throughout and are repeated in every phase guide:
+
+- **Phases advance as a group.** A rater never starts the next phase until the
+  whole group is advanced together. No working ahead, and no opening or exploring
+  later phases.
+- **A rater stays in their own folder.** A rater never opens, browses, or copies
+  from another rater's directories — segmentations are produced independently.
+- A rater works only within their own rater folder, identified by initials.
+- External or expert labels are not sought on the server.
+- Files inside `inputs/` are never modified.

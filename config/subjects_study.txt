@@ -1,0 +1,7 @@
+# Study subjects (calibration + production). One subject label per line.
+sub-1001
+sub-1002
+sub-1003
+sub-5001
+sub-5002
+sub-5003

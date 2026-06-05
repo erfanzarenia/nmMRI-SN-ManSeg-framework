@@ -1,0 +1,69 @@
+# Phase definitions, split seed, and workspace ID naming for the SN workflow.
+# split_subjects.py and make_workspace.py read this file.
+#
+# seed       Deterministic-random subject -> phase/rater assignment. The same
+#            seed reproduces the same split; override with --seed.
+# id_prefix  Prefix for the anonymized workspace subject IDs.
+# id_width   Zero-padded width of the workspace ID counter.
+#            Workspace scans are RELABELED (e.g. sub-0001) so their IDs do not
+#            match the source scan IDs, which keeps raters blind. The
+#            workspace -> source key is written to config/subjects_split.json
+#            (kept private; never shared with raters).
+#
+# Each phaseN block:
+#   name        slug for the workspace folder -> phaseN_<name>
+#   pool        pool to draw from (must match a pool in paths.yaml)
+#   n_subjects  number to allocate, or "all" for the remainder
+#   assignment  shared      -> every rater gets the same subjects
+#               partitioned -> subjects divided across raters
+#   overlap     partitioned only: fraction [0..1] of the phase's subjects also
+#               given to EVERY rater (hidden repeats) for reliability monitoring
+#   expert_mask place an expert_mask alongside each image (pool must define
+#               expert_mask_pattern)
+#   attempts    1 -> outputs/<sub>/<rater>_mask.nii.gz
+#               N -> outputs/<sub>/<rater>_mask_a1 .. _aN.nii.gz
+
+seed: 42
+id_prefix: "sub-"
+id_width: 4
+
+phase1:
+  name: playground
+  pool: labeled
+  n_subjects: 2
+  assignment: shared
+  expert_mask: true
+  attempts: 2
+
+phase2:
+  name: practice
+  pool: labeled
+  n_subjects: 7
+  assignment: shared
+  expert_mask: true
+  attempts: 2
+
+phase3:
+  name: mock_exam
+  pool: labeled
+  n_subjects: 5
+  assignment: shared
+  expert_mask: false
+  attempts: 1
+
+phase4:
+  name: exam
+  pool: labeled
+  n_subjects: 10
+  assignment: shared
+  expert_mask: false
+  attempts: 1
+
+phase5:
+  name: production
+  pool: study
+  n_subjects: all
+  assignment: partitioned
+  overlap: 0.15
+  expert_mask: false
+  attempts: 1
