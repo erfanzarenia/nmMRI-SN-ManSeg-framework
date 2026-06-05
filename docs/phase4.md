@@ -4,7 +4,7 @@
 conditions. This is the scientifically important phase. Subjects are **shared**
 across raters to generate inter-rater reliability data.
 
-> **Important:** Phases advance as a group — a rater never moves to another phase
+> **Important:** Phases advance as a group. A rater never moves to another phase
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 

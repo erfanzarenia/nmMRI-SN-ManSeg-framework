@@ -4,7 +4,7 @@
 **partitioned** across raters so each is segmented once and coverage scales. This
 is the actual research output.
 
-> **Important:** Phases advance as a group — a rater never moves to another phase
+> **Important:** Phases advance as a group. A rater never moves to another phase
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 

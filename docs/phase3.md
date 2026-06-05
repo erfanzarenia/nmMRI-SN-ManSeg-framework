@@ -4,7 +4,7 @@
 the scored Exam. Segmentation is fully blind (no expert mask), exactly as in
 Phase 4, but the results are not used for the final reliability statistics.
 
-> **Important:** Phases advance as a group — a rater never moves to another phase
+> **Important:** Phases advance as a group. A rater never moves to another phase
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 

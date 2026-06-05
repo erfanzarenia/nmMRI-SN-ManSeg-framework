@@ -15,10 +15,9 @@ axial, sagittal, and coronal views.
 ## Adjust visibility
 
 `Tools → Image Contrast` adjusts brightness/contrast until the SN is clearly
-visible without washing out the background. Settings are kept consistent across
-subjects.
+visible without washing out the background. Settings are kept consistent across slices with a subject.
 
-## Overlay the expert mask (phases 1–2 only)
+## Overlay the expert mask (phases 1 only)
 
 `Segmentation → Open Segmentation`, select `expert_mask.nii.gz`, `OK`. The opacity
 slider and visibility toggle control how it is shown.

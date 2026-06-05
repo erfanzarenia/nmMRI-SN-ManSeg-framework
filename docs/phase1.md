@@ -5,7 +5,7 @@ first, low-pressure pass at producing segmentations. The goal is intuition for
 where the SN is, how its boundaries look, and how it differs from surrounding
 structures. The structure mirrors Phase 2; only the purpose differs.
 
-> **Important:** Phases advance as a group — a rater never moves to another phase
+> **Important:** Phases advance as a group. A rater never moves to another phase
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 

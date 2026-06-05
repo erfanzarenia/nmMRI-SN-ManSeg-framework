@@ -4,7 +4,7 @@
 before blind work begins. The aim is a stable, reproducible approach with reduced
 variability.
 
-> **Important:** Phases advance as a group — a rater never moves to another phase
+> **Important:** Phases advance as a group. A rater never moves to another phase
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 
@@ -14,8 +14,7 @@ For each assigned subject, the rater:
 
 1. Opens `inputs/<sub>/image.nii.gz` in ITK-SNAP.
 2. Creates an SN segmentation.
-3. Compares it against `inputs/<sub>/expert_mask.nii.gz`, reviews differences,
-   and refines the approach.
+3. Compares it against `inputs/<sub>/expert_mask.nii.gz` after each segmentation attempt is done, reviews differences, and refines the approach.
 
 Attention goes to anatomical continuity across slices, smooth and plausible
 boundaries, avoiding isolated noisy voxels, and consistency across subjects.

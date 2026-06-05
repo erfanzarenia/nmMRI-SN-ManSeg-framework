@@ -3,17 +3,20 @@
 
 Creates inputs/ and outputs/ for every phase and populates each subject's inputs
 (image, and expert mask where the phase calls for one) from that pool's
-read-only source dataset in config/paths.yaml. Output folders are created empty
-for raters to fill in ITK-SNAP. The rater-facing docs are also copied into
-<workspace_root>/docs/ so raters have the instructions alongside the data.
+read-only source dataset in config/paths.yaml. The source may be BIDS-style or
+flat, with .nii or .nii.gz files; every input is normalized to a gzip-compressed
+.nii.gz in the workspace. Output folders are created empty for raters to fill in
+ITK-SNAP, and the rater-facing docs are copied into <workspace_root>/docs/
+alongside the data.
 
     python scripts/make_workspace.py                 # build everything
     python scripts/make_workspace.py --phase phase4  # one phase
     python scripts/make_workspace.py --dry-run       # preview the tree only
-    python scripts/make_workspace.py --link          # symlink inputs instead of copy
+    python scripts/make_workspace.py --link          # symlink when source is .nii.gz
     python scripts/make_workspace.py --skip-docs     # do not copy the rater docs
 """
 import argparse
+import gzip
 import shutil
 from pathlib import Path
 
@@ -27,14 +30,39 @@ RATER_DOCS = [
 ]
 
 
+# Default file patterns per source layout. A pool selects one with `layout:`
+# (default "bids") and may override either pattern explicitly in paths.yaml.
+LAYOUT_DEFAULTS = {
+    # BIDS-like: per-subject sub-dirs; expert masks under derivatives/.
+    "bids": {
+        "image_pattern": "{subject}/anat/{subject}_acq-NM_T1w.nii.gz",
+        "expert_mask_pattern": "derivatives/expert/{subject}/{subject}_acq-NM_label-SN_mask.nii.gz",
+    },
+    # Flat: every file directly in data_root.
+    "flat": {
+        "image_pattern": "{subject}.nii.gz",
+        "expert_mask_pattern": "{subject}_SN.nii.gz",
+    },
+}
+
+
+def pool_patterns(pdef):
+    """(image_pattern, expert_mask_pattern) for a pool: explicit patterns win,
+    otherwise the `layout` defaults apply."""
+    defaults = LAYOUT_DEFAULTS.get(pdef.get("layout", "bids"), {})
+    image = pdef.get("image_pattern", defaults.get("image_pattern"))
+    if image is None:
+        raise KeyError(f"pool needs image_pattern or a known layout {list(LAYOUT_DEFAULTS)}")
+    return image, pdef.get("expert_mask_pattern", defaults.get("expert_mask_pattern"))
+
+
 def source_paths(paths, pool, subject):
     """(image_src, expert_src_or_None) for a subject in the given pool."""
     pdef = paths["pools"][pool]
     root = Path(pdef["data_root"])
-    image = root / pdef["image_pattern"].format(subject=subject)
-    expert = None
-    if "expert_mask_pattern" in pdef:
-        expert = root / pdef["expert_mask_pattern"].format(subject=subject)
+    image_pat, expert_pat = pool_patterns(pdef)
+    image = root / image_pat.format(subject=subject)
+    expert = root / expert_pat.format(subject=subject) if expert_pat else None
     return image, expert
 
 
@@ -57,23 +85,31 @@ def copy_docs(docs_dir, workspace, dry_run):
 
 
 def place(src, dst_dir, stem, link, dry_run, log):
-    """Copy or symlink one source volume into dst_dir as <stem>.<ext>."""
+    """Materialize one source volume into dst_dir as <stem>.nii.gz, always
+    gzip-compressed regardless of whether the source is .nii or .nii.gz (and
+    regardless of a misleading extension; compression is judged by content).
+    With --link, symlink instead, but only when the source is already
+    gzip-compressed; otherwise it is converted."""
+    dst = Path(dst_dir) / f"{stem}.nii.gz"
     if dry_run:
-        log.append(f"    {'link' if link else 'copy'}  {src}  ->  {dst_dir}/{stem}.nii.gz")
+        log.append(f"    {'link/convert' if link else 'convert'}  {src}  ->  {dst}")
         return True
     resolved = utils.resolve(src)
     if resolved is None:
         log.append(f"    MISSING source: {src}")
         return False
-    ext = ".nii.gz" if str(resolved).endswith(".gz") else ".nii"
-    dst = Path(dst_dir) / f"{stem}{ext}"
+    with open(resolved, "rb") as f:
+        is_gz = f.read(2) == b"\x1f\x8b"
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() or dst.is_symlink():
         dst.unlink()
-    if link:
+    if link and is_gz:
         dst.symlink_to(resolved.resolve())
-    else:
-        shutil.copy2(resolved, dst)
+    elif is_gz:
+        shutil.copyfile(resolved, dst)                  # already .nii.gz content
+    else:                                               # .nii content -> compress
+        with open(resolved, "rb") as fi, gzip.open(dst, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
     return True
 
 
@@ -84,7 +120,8 @@ def main():
     ap.add_argument("--split", type=Path, default=None,
                     help="subjects_split.json (default: <config-dir>/subjects_split.json).")
     ap.add_argument("--phase", default=None, help="Build only this phase, e.g. phase4.")
-    ap.add_argument("--link", action="store_true", help="Symlink inputs instead of copying.")
+    ap.add_argument("--link", action="store_true",
+                    help="Symlink inputs when the source is already .nii.gz; otherwise convert.")
     ap.add_argument("--dry-run", action="store_true", help="Print actions without writing.")
     ap.add_argument("--docs-dir", type=Path, default=utils.REPO_ROOT / "docs",
                     help="Source docs copied into <workspace>/docs/ for raters.")

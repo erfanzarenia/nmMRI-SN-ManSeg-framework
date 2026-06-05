@@ -46,6 +46,10 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
 - Each workspace subject folder holds `image.nii.gz` (plus `expert_mask.nii.gz`
   in the expert-guided phases). Rater outputs are `<INIT>_mask.nii.gz` (single
   attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts).
+- The source dataset may be BIDS-style or a single flat folder, with `.nii` or
+  `.nii.gz` files (set `layout` per pool in
+  [`config/paths.yaml`](../config/paths.yaml)); every workspace input is
+  normalized to gzip-compressed `.nii.gz`.
 - The workspace → source key is written to `config/subjects_split.json`. It is
   kept private, never shared with raters, and is git-ignored.
 
@@ -94,7 +98,7 @@ These apply throughout and are repeated in every phase guide:
   whole group is advanced together. No working ahead, and no opening or exploring
   later phases.
 - **A rater stays in their own folder.** A rater never opens, browses, or copies
-  from another rater's directories — segmentations are produced independently.
+  from another rater's directories. segmentations are produced independently.
 - A rater works only within their own rater folder, identified by initials.
 - External or expert labels are not sought on the server.
 - Files inside `inputs/` are never modified.
