@@ -17,15 +17,15 @@ pools:
   labeled:
     data_root: /path/to/labeled_dataset
     layout: flat
-    image_pattern: "{subject}/anat/{subject}_acq-NM_T1w.nii.gz"
-    expert_mask_pattern: "derivatives/expert/{subject}/{subject}_acq-NM_label-SN_mask.nii.gz"
+    image_pattern: "{subject}/NM_echo1*.nii"
+    expert_mask_pattern: "{subject}/NM_echo1*_SN.nii.gz"
     subjects: subjects_labeled.txt
 
   # Study set: unlabeled NM images.
   study:
-    data_root: /data/nmMRI_study
+    data_root: /path/to/study_bids
     layout: bids
-    image_pattern: "{subject}_acq-NM_T1w.nii.gz"
+    image_pattern: "{subject}/anat/{subject}_acq-NM_run-01_echo-1_echo-1_part-mag_GRE.nii.gz"
     expert_mask_pattern: null
     subjects: subjects_study.txt
 

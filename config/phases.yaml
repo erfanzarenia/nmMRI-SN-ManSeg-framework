@@ -23,7 +23,7 @@
 #   attempts    1 -> outputs/<sub>/<rater>_mask.nii.gz
 #               N -> outputs/<sub>/<rater>_mask_a1 .. _aN.nii.gz
 
-seed: 42
+seed: 7
 id_prefix: "sub-"
 id_width: 4
 
@@ -46,7 +46,7 @@ phase2:
 phase3:
   name: mock_exam
   pool: labeled
-  n_subjects: 5
+  n_subjects: 7
   assignment: shared
   expert_mask: false
   attempts: 1
@@ -54,7 +54,7 @@ phase3:
 phase4:
   name: exam
   pool: labeled
-  n_subjects: 10
+  n_subjects: 12
   assignment: shared
   expert_mask: false
   attempts: 1

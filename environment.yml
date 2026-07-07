@@ -7,3 +7,5 @@ dependencies:
   - pandas
   - nibabel
   - pyyaml
+  - scipy          # surface-distance / Hausdorff metrics (qc_analysis.py)
+  - matplotlib     # QC figures and worst-slice montages (qc_visualize.py)
