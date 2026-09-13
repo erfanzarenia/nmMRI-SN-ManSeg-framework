@@ -1,8 +1,9 @@
 """Shared helpers for the SN manual-segmentation scripts.
 
-Kept deliberately small: config loading, the phase -> rater -> subject path
-conventions, and NIfTI/Dice helpers. The on-disk layout has a single source of
-truth here, so make_workspace.py and qc_metrics.py never disagree about it.
+Kept deliberately small: config loading, label values, source-data and
+phase -> rater -> subject path conventions, and NIfTI/Dice helpers. The on-disk
+layout has a single source of truth here, so make_workspace.py, split_subjects.py
+and the QC scripts never disagree about it.
 
 numpy/nibabel are imported lazily, so split_subjects.py and make_workspace.py
 run with only PyYAML installed.
@@ -104,6 +105,48 @@ def find_subjects(phase_dir, raters):
             found.update(p.name for p in search.iterdir()
                          if p.is_dir() and p.name.startswith("sub-"))
     return sorted(found)
+
+
+# ---------------------------- source data ----------------------------
+# Default file patterns per source layout. A pool selects one with `layout:`
+# (default "bids") and may override either pattern explicitly in paths.yaml.
+LAYOUT_DEFAULTS = {
+    # BIDS-like: per-subject sub-dirs; expert masks under derivatives/.
+    "bids": {
+        "image_pattern": "{subject}/anat/{subject}_acq-NM_T1w.nii.gz",
+        "expert_mask_pattern": "derivatives/expert/{subject}/{subject}_acq-NM_label-SN_mask.nii.gz",
+    },
+    # Flat: every file directly in data_root.
+    "flat": {
+        "image_pattern": "{subject}.nii.gz",
+        "expert_mask_pattern": "{subject}_SN.nii.gz",
+    },
+}
+
+
+def pool_patterns(pdef):
+    """(image_pattern, expert_mask_pattern) for a pool: explicit patterns win,
+    otherwise the `layout` defaults apply."""
+    defaults = LAYOUT_DEFAULTS.get(pdef.get("layout", "bids"), {})
+    image = pdef.get("image_pattern", defaults.get("image_pattern"))
+    if image is None:
+        raise KeyError(f"pool needs image_pattern or a known layout {list(LAYOUT_DEFAULTS)}")
+    return image, pdef.get("expert_mask_pattern", defaults.get("expert_mask_pattern"))
+
+
+def source_paths(pdef, subject):
+    """(image, expert_mask or None) source paths for one subject of a pool.
+    Patterns are filled with the subject and the pool's own keys (e.g. run).
+    With several data roots the first root holding the image is used; if none
+    has it, the path under the first root is returned (and reported missing)."""
+    roots = pdef["data_root"]
+    roots = [roots] if isinstance(roots, str) else roots
+    image_pat, expert_pat = pool_patterns(pdef)
+    fields = {**pdef, "subject": subject}
+    image = image_pat.format(**fields)
+    root = next((Path(r) for r in roots if resolve(Path(r) / image)), Path(roots[0]))
+    expert = root / expert_pat.format(**fields) if expert_pat else None
+    return root / image, expert
 
 
 # ------------------------------ NIfTI --------------------------------

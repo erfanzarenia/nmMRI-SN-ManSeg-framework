@@ -31,42 +31,6 @@ RATER_DOCS = [
 ]
 
 
-# Default file patterns per source layout. A pool selects one with `layout:`
-# (default "bids") and may override either pattern explicitly in paths.yaml.
-LAYOUT_DEFAULTS = {
-    # BIDS-like: per-subject sub-dirs; expert masks under derivatives/.
-    "bids": {
-        "image_pattern": "{subject}/anat/{subject}_acq-NM_T1w.nii.gz",
-        "expert_mask_pattern": "derivatives/expert/{subject}/{subject}_acq-NM_label-SN_mask.nii.gz",
-    },
-    # Flat: every file directly in data_root.
-    "flat": {
-        "image_pattern": "{subject}.nii.gz",
-        "expert_mask_pattern": "{subject}_SN.nii.gz",
-    },
-}
-
-
-def pool_patterns(pdef):
-    """(image_pattern, expert_mask_pattern) for a pool: explicit patterns win,
-    otherwise the `layout` defaults apply."""
-    defaults = LAYOUT_DEFAULTS.get(pdef.get("layout", "bids"), {})
-    image = pdef.get("image_pattern", defaults.get("image_pattern"))
-    if image is None:
-        raise KeyError(f"pool needs image_pattern or a known layout {list(LAYOUT_DEFAULTS)}")
-    return image, pdef.get("expert_mask_pattern", defaults.get("expert_mask_pattern"))
-
-
-def source_paths(paths, pool, subject):
-    """(image_src, expert_src_or_None) for a subject in the given pool."""
-    pdef = paths["pools"][pool]
-    root = Path(pdef["data_root"])
-    image_pat, expert_pat = pool_patterns(pdef)
-    image = root / image_pat.format(subject=subject)
-    expert = root / expert_pat.format(subject=subject) if expert_pat else None
-    return image, expert
-
-
 def copy_docs(docs_dir, workspace, dry_run):
     """Copy the rater-facing docs into <workspace>/docs/. Returns the count."""
     dest = Path(workspace) / "docs"
@@ -141,15 +105,17 @@ def main():
         pcfg = phases[key]
         info = split["phases"][key]
         pool = pcfg["pool"]
+        pdef = paths["pools"][pool]
         phase_dir = workspace / utils.phase_dirname(key, pcfg)
         inputs = "image + expert_mask" if pcfg["expert_mask"] else "image"
+        run = f" (run {pdef['run']})" if "run" in pdef else ""
         print(f"\n== {phase_dir} ==")
-        print(f"   pool={pool}, {info['assignment']}, inputs: {inputs}, "
+        print(f"   pool={pool}{run}, {info['assignment']}, inputs: {inputs}, "
               f"attempts: {pcfg['attempts']}, labels: {'+'.join(utils.phase_labels(pcfg))}")
         for rater, subs in info["by_rater"].items():
             for sub in subs:                         # sub is an anonymized workspace ID
                 log = []
-                image_src, expert_src = source_paths(paths, pool, mapping[sub])
+                image_src, expert_src = utils.source_paths(pdef, mapping[sub])
                 in_dir = utils.input_dir(phase_dir, rater, sub)
                 ok = place(image_src, in_dir, "image", args.link, args.dry_run, log)
                 if pcfg["expert_mask"]:
