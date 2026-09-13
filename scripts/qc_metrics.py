@@ -10,7 +10,8 @@ phase provides one) and writes tidy CSVs under <qc_output_root>/<phase>/:
 
     python scripts/qc_metrics.py --phase phase4
 
-Assumes a single SN label (voxel value 1); override with --label.
+Measures one label, SN (voxel value 1) by default; override with --label.
+Masks from Phase 3 on also hold CP (2), which qc_protocol.py checks.
 """
 import argparse
 from itertools import combinations

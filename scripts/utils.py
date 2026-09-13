@@ -59,6 +59,18 @@ def phase_keys(phases):
     return sorted(keys, key=lambda k: int(_PHASE_RE.match(k).group(1)))
 
 
+# ------------------------------ labels -------------------------------
+# Label values in rater and expert masks, matching the ITK-SNAP label file
+# docs/SN_label_definition.txt. CP (cerebral peduncle) is the reference region,
+# segmented from Phase 3 on; each phase lists its labels in phases.yaml.
+LABELS = {"SN": 1, "CP": 2}
+
+
+def phase_labels(pcfg):
+    """Label names segmented in a phase (SN only when unspecified)."""
+    return list(pcfg.get("labels", ["SN"]))
+
+
 # -------------------------- path conventions -------------------------
 # Workspace layout built by make_workspace.py (same for every phase):
 #   <ws>/<phaseN_name>/<rater>/inputs/<sub>/image.nii.gz [+ expert_mask.nii.gz]

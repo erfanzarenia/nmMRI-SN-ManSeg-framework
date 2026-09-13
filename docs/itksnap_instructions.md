@@ -1,7 +1,8 @@
 # ITK-SNAP Quick Guide
 
-A brief reference for segmenting the SN in ITK-SNAP. Steps describe what the
-rater does.
+A brief reference for segmenting the SN and CP in ITK-SNAP. Steps describe what
+the rater does; what to segment is defined in
+[segmentation_protocol.md](segmentation_protocol.md).
 
 ## Launch
 
@@ -15,9 +16,9 @@ axial, sagittal, and coronal views.
 ## Adjust visibility
 
 `Tools → Image Contrast` adjusts brightness/contrast until the SN is clearly
-visible without washing out the background. Settings are kept consistent across slices with a subject.
+visible without washing out the background. Settings are kept consistent across slices within a subject.
 
-## Overlay the expert mask (phases 1 only)
+## Overlay the expert mask (phases 1–2 only)
 
 `Segmentation → Open Segmentation`, select `expert_mask.nii.gz`, `OK`. The opacity
 slider and visibility toggle control how it is shown.
@@ -26,15 +27,21 @@ slider and visibility toggle control how it is shown.
 
 1. `Segmentation → New Segmentation` (defaults accepted).
 2. Import the shared labels: `Segmentation → Label Definitions → Import`, then
-   select [`docs/SN_label_definition.txt`](SN_label_definition.txt) (SN = value
-   1). This keeps labels consistent across raters.
+   select [`docs/SN_label_definition.txt`](SN_label_definition.txt): SN = value
+   1 (red), CP = value 2 (green). This keeps labels consistent across raters.
 3. Editing applies to the rater's own segmentation, not the expert mask.
 
 ## Drawing
 
+- The **Active label** (Segmentation Labels panel, bottom-left) sets what is
+  drawn: SN, then CP on the same slices (CP from Phase 3). It is checked before
+  drawing.
+- **Paint over** (same panel) is set to **Clear label** while drawing CP, so CP
+  fills only unlabeled voxels and never overwrites SN.
 - **Paintbrush** or **Polygon** mode (Main Toolbar, top-left) adds voxels.
-- To erase, **Clear Label** is set as the active label (Segmentation Labels
-  panel, bottom-left) and painted over voxels to remove them.
+- To erase, **Clear Label** is set as the active label and painted over voxels
+  to remove them; with Paint over set to a single label, only that label is
+  erased.
 - Axial first, then verification in sagittal and coronal.
 - `Continuous Update 3D View` (Ctrl+Shift+U) shows the structure build in real
   time.
@@ -42,7 +49,7 @@ slider and visibility toggle control how it is shown.
 ## Save the mask
 
 `Segmentation → Save As`, into the subject's `outputs/<sub>/` folder, named with
-the rater's initials:
+the rater's initials. One file holds every label (SN, and CP from Phase 3):
 
 - Phases 3–5 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
 - Phases 1–2 (two attempts): **`<INITIALS>_mask_a1.nii.gz`** then
@@ -59,6 +66,7 @@ the rater's initials:
 - Forgetting to create a new segmentation (and editing the expert mask).
 - Saving in the wrong directory or with the wrong filename.
 - Inconsistent boundaries across slices.
+- Drawing with the wrong active label, or CP painted over SN.
 
 ## Tutorial
 

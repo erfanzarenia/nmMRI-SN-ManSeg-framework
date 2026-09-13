@@ -1,10 +1,10 @@
 # Workflow Overview
 
 Manual segmentation of the substantia nigra (SN) on neuromelanin-sensitive MRI
-(NM-MRI). The work is organized into five phases that gradually train raters,
-ensure consistency, and produce reliable data for analysis. Each phase builds on
-the previous one; later phases are not opened until the earlier ones are
-complete.
+(NM-MRI), with the cerebral peduncle (CP) segmented as a reference region. The
+work is organized into five phases that gradually train raters, ensure
+consistency, and produce reliable data for analysis. Each phase builds on the
+previous one; later phases are not opened until the earlier ones are complete.
 
 ## Big picture
 
@@ -17,13 +17,13 @@ rehearses blind, phase 4 measures reliability, phase 5 scales.
 
 ## Phases
 
-| Phase | Name       | Pool    | Expert mask | Rater output         | Assignment  |
-|-------|------------|---------|-------------|----------------------|-------------|
-| 1     | Playground | labeled | yes         | `<INIT>_mask_a1/a2`  | shared      |
-| 2     | Practice   | labeled | yes         | `<INIT>_mask_a1/a2`  | shared      |
-| 3     | Mock exam  | labeled | no          | `<INIT>_mask`        | shared      |
-| 4     | Exam       | labeled | no          | `<INIT>_mask`        | shared      |
-| 5     | Production | study   | no          | `<INIT>_mask`        | partitioned |
+| Phase | Name       | Pool    | Expert mask | Labels  | Rater output        | Assignment  |
+|-------|------------|---------|-------------|---------|---------------------|-------------|
+| 1     | Playground | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 2     | Practice   | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 3     | Mock exam  | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 4     | Exam       | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 5     | Production | study   | no          | SN + CP | `<INIT>_mask`       | partitioned |
 
 - **shared** — every rater segments the same subjects (enables inter-rater
   comparison).
@@ -32,9 +32,14 @@ rehearses blind, phase 4 measures reliability, phase 5 scales.
 - **labeled** vs **study** — two disjoint subject pools that live in different
   places (with / without expert masks). Each is a *pool* in
   [`config/paths.yaml`](../config/paths.yaml).
+- **SN / CP** — label 1 = substantia nigra; label 2 = cerebral peduncle, a
+  reference region added from Phase 3 (Phases 1–2 are SN-only). One mask file
+  holds both; the rules are in
+  [segmentation_protocol.md](segmentation_protocol.md).
 
 Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) ·
-[phase4](phase4.md) · [phase5](phase5.md). Tool:
+[phase4](phase4.md) · [phase5](phase5.md). Protocol:
+[segmentation_protocol](segmentation_protocol.md). Tool:
 [itksnap_instructions](itksnap_instructions.md). QC: [qc](qc.md).
 
 ## Scan naming and blinding
@@ -45,7 +50,8 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
   from the seed in [`config/phases.yaml`](../config/phases.yaml).
 - Each workspace subject folder holds `image.nii.gz` (plus `expert_mask.nii.gz`
   in the expert-guided phases). Rater outputs are `<INIT>_mask.nii.gz` (single
-  attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts).
+  attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts), each
+  holding every label of the phase.
 - The source dataset may be BIDS-style or a single flat folder, with `.nii` or
   `.nii.gz` files (set `layout` per pool in
   [`config/paths.yaml`](../config/paths.yaml)); every workspace input is
@@ -61,8 +67,9 @@ identically for every phase, and copies the rater-facing guides into a shared
 
 ```
 <workspace_root>/
-  docs/                            # copies of this overview, the phase guides,
-                                   # the ITK-SNAP guide, and the SN label file
+  docs/                            # copies of this overview, the segmentation
+                                   # protocol, the phase guides, the ITK-SNAP
+                                   # guide, and the label file
   <phaseN_name>/
     <RATER>/
       inputs/<sub-XXXX>/image.nii.gz [+ expert_mask.nii.gz]
@@ -89,6 +96,7 @@ python scripts/make_workspace.py
 # 5. QC + inter-rater analysis, run centrally (exam shown).
 python scripts/qc_metrics.py --phase phase4
 python scripts/interrater_analysis.py --phase phase4
+python scripts/qc_protocol.py --phase phase4
 ```
 
 ## Rules

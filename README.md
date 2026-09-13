@@ -1,17 +1,20 @@
 # nmMRI SN Manual-Segmentation Framework
 
 A minimal, reproducible workflow for **multi-rater manual segmentation of the
-substantia nigra (SN)** on neuromelanin-sensitive MRI (NM-MRI), using ITK-SNAP.
+substantia nigra (SN)** on neuromelanin-sensitive MRI (NM-MRI), using ITK-SNAP,
+with the **cerebral peduncle (CP)** segmented as a reference region.
 
 It generates a phase-based, per-rater workspace from configurable subject lists,
-then computes Dice and inter-rater agreement. Everything is config-driven, no paths are hard-coded, and runnable from scripts.
+then computes Dice, inter-rater agreement, and CP protocol checks. Everything is config-driven, no paths are hard-coded, and runnable from scripts.
 
 ## Structure
 
 ```
 config/      paths, raters, phase definitions, subject lists (edit these)
-scripts/     split_subjects, make_workspace, qc_metrics, interrater_analysis, utils
-docs/        workflow, per-phase guides, ITK-SNAP guide, QC, SN label definition
+scripts/     split_subjects, make_workspace, QC (qc_metrics, interrater_analysis,
+             run_qc + qc_analysis/qc_visualize/qc_report, qc_protocol), utils
+docs/        workflow, segmentation protocol, per-phase guides, ITK-SNAP guide,
+             QC, label definitions (SN = 1, CP = 2)
 environment.yml
 ```
 
@@ -31,20 +34,22 @@ python scripts/make_workspace.py                  # build it (copies inputs)
 # Raters segment in ITK-SNAP, then:
 python scripts/qc_metrics.py --phase phase4
 python scripts/interrater_analysis.py --phase phase4
+python scripts/qc_protocol.py --phase phase4      # CP rules + reference intensity
 ```
 
 ## Phases
 
-| Phase | Name       | Expert mask | Output              | Subjects    |
-|-------|------------|-------------|---------------------|-------------|
-| 1     | Playground | yes         | `<INIT>_mask_a1/a2` | shared      |
-| 2     | Practice   | yes         | `<INIT>_mask_a1/a2` | shared      |
-| 3     | Mock exam  | no          | `<INIT>_mask`       | shared      |
-| 4     | Exam       | no          | `<INIT>_mask`       | shared      |
-| 5     | Production | no          | `<INIT>_mask`       | partitioned |
+| Phase | Name       | Expert mask | Labels  | Output              | Subjects    |
+|-------|------------|-------------|---------|---------------------|-------------|
+| 1     | Playground | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 2     | Practice   | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 3     | Mock exam  | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 4     | Exam       | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 5     | Production | no          | SN + CP | `<INIT>_mask`       | partitioned |
 
 See [docs/overview.md](docs/overview.md) for the full workflow and workspace
-layout, and [docs/qc.md](docs/qc.md) for QC details.
+layout, [docs/segmentation_protocol.md](docs/segmentation_protocol.md) for what
+is segmented, and [docs/qc.md](docs/qc.md) for QC details.
 
 ## Notes
 

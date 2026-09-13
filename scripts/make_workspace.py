@@ -25,7 +25,8 @@ import utils
 # Docs copied into <workspace_root>/docs/ for raters. QC and README are
 # intentionally excluded (conductor-facing).
 RATER_DOCS = [
-    "overview.md", "itksnap_instructions.md", "SN_label_definition.txt",
+    "overview.md", "segmentation_protocol.md", "itksnap_instructions.md",
+    "SN_label_definition.txt",
     "phase1.md", "phase2.md", "phase3.md", "phase4.md", "phase5.md",
 ]
 
@@ -144,7 +145,7 @@ def main():
         inputs = "image + expert_mask" if pcfg["expert_mask"] else "image"
         print(f"\n== {phase_dir} ==")
         print(f"   pool={pool}, {info['assignment']}, inputs: {inputs}, "
-              f"attempts: {pcfg['attempts']}")
+              f"attempts: {pcfg['attempts']}, labels: {'+'.join(utils.phase_labels(pcfg))}")
         for rater, subs in info["by_rater"].items():
             for sub in subs:                         # sub is an anonymized workspace ID
                 log = []

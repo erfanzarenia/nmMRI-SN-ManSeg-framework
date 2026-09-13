@@ -8,6 +8,8 @@ variability.
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 
+**Labels:** SN only (label 1); the CP reference label starts in Phase 3.
+
 ## What the rater does
 
 For each assigned subject, the rater:

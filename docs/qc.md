@@ -1,9 +1,11 @@
 # QC & Inter-Rater Analysis
 
-Two scripts, run centrally (not by raters), per phase. Both read paths from
-[`config/paths.yaml`](../config/paths.yaml) and assume a single SN label
-(value 1; override with `--label`). Results are shared back with raters only when
-appropriate.
+Scripts are run centrally (not by raters), per phase, and read paths from
+[`config/paths.yaml`](../config/paths.yaml). Masks hold SN = 1 and, from Phase
+3, CP = 2, the cerebral-peduncle reference region
+([segmentation_protocol.md](segmentation_protocol.md)). Sections 1–3 measure one
+label at a time, SN by default (`--label`); section 4 checks the CP rules and
+reference intensity. Results are shared back with raters only when appropriate.
 
 ## 1. Metrics
 
@@ -98,14 +100,48 @@ attempt-to-attempt agreement (a_i vs a_j). The original `qc_metrics.py`
 cross-check. Each report opens with a Methods note; start at
 `summary/overall_qc_report.md`.
 
+## 4. Protocol & reference region (CP)
+
+CP is a reference region: what matters is that it follows the rules in
+[segmentation_protocol.md](segmentation_protocol.md) and gives a stable
+reference intensity, more than its overlap between raters.
+
+```bash
+python scripts/qc_protocol.py --phase phase4 \
+    --workspace ~/path/to/ManSeg_Workspace \
+    --qc-root   ~/path/to/ManSeg_Workspace/qc
+```
+
+Writes to `<qc-root>/<phase>/a<N>/protocol/` (attempt 1 unless `--attempt N`):
+
+| File                     | Contents |
+|--------------------------|----------|
+| `protocol_per_mask.csv`  | per rater × scan: labels present, SN/CP volume, hemispheres covered, CP slice coverage vs SN, CP voxels touching SN, mean SN and CP intensity, contrast `(SN − CP) / CP`, and rule flags |
+| `agreement_per_scan.csv` | per rater × scan with ≥ 2 raters: mean SN Dice, SN HD95 and CP Dice vs the other raters; SN volume ÷ scan median (`sn_volume_ratio`); CP mean intensity vs scan median (`cp_mean_dev`); contrast minus scan median (`contrast_diff`) |
+
+**CP criteria.** Every mask is expected to raise no flags:
+
+- only the phase's labels are present;
+- SN and CP each cover both hemispheres;
+- CP is on every axial slice that has SN, and on no other slice;
+- no CP voxel touches SN within a slice (at least a one-voxel gap).
+
+Where several raters segment a scan (shared phases, production overlap), each
+rater's mean CP intensity is expected within ±5% of the scan median
+(`|cp_mean_dev| ≤ 0.05`); larger deviations usually mean CSF, vessels or SN
+voxels inside CP. CP Dice is informative only: CP is a reference region, not a
+boundary to reproduce.
+
 ## Which phase to QC
 
 - **Phase 2 (Practice)** — rater-vs-expert calibration (shared, has expert
   masks).
 - **Phase 3 (Mock exam)** — pairwise inter-rater on the blind rehearsal set; a
-  sanity check before the real Exam.
+  sanity check before the real Exam. It is the first phase with CP, so the
+  section 4 flags are fed back before the Exam.
 - **Phase 4 (Exam)** — inter-rater reliability (shared, blind). The primary QC
-  target.
+  target, for SN (sections 1–3) and CP (section 4).
 - **Phase 5 (Production)** — partitioned, so pairwise Dice is computed only on
   the hidden overlap subset, giving an ongoing reliability check on the
-  production data. `volumes.csv` covers the rest as a distribution sanity check.
+  production data. `volumes.csv` covers the rest as a distribution sanity check,
+  and section 4 checks the CP rules on every mask.

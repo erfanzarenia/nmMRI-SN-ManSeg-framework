@@ -8,12 +8,17 @@ Phase 4, but the results are not used for the final reliability statistics.
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 
+**Labels:** SN (label 1) and CP (label 2), in one mask. CP is new in this phase;
+its rules in [segmentation_protocol.md](segmentation_protocol.md) are read
+before starting.
+
 ## What the rater does
 
 For each assigned subject, the rater:
 
 1. Opens `inputs/<sub>/image.nii.gz` in ITK-SNAP.
-2. Creates one SN segmentation, with no reference mask.
+2. Creates one segmentation with no reference mask: SN, then CP on the same
+   slices.
 
 Conditions match the real Exam, so workflow, timing, and contrast settings can be
 settled in advance.

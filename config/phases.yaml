@@ -28,6 +28,9 @@
 #               expert_mask_pattern)
 #   attempts    1 -> outputs/<sub>/<rater>_mask.nii.gz
 #               N -> outputs/<sub>/<rater>_mask_a1 .. _aN.nii.gz
+#   labels      labels segmented, all in one mask file (values as in
+#               docs/SN_label_definition.txt): SN = 1, CP = 2 (cerebral
+#               peduncle reference region, from Phase 3). Default: [SN]
 
 seed: 7
 id_prefix: "sub-"
@@ -40,6 +43,7 @@ phase1:
   assignment: shared
   expert_mask: true
   attempts: 2
+  labels: [SN]
 
 phase2:
   name: practice
@@ -48,6 +52,7 @@ phase2:
   assignment: shared
   expert_mask: true
   attempts: 2
+  labels: [SN]
 
 phase3:
   name: mock_exam
@@ -56,6 +61,7 @@ phase3:
   assignment: shared
   expert_mask: false
   attempts: 1
+  labels: [SN, CP]
 
 phase4:
   name: exam
@@ -64,6 +70,7 @@ phase4:
   assignment: shared
   expert_mask: false
   attempts: 1
+  labels: [SN, CP]
 
 phase5:
   name: production
@@ -73,3 +80,4 @@ phase5:
   overlap: 0.15
   expert_mask: false
   attempts: 1
+  labels: [SN, CP]

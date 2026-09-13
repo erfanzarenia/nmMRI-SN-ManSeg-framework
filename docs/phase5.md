@@ -8,12 +8,16 @@ is the actual research output.
 > ahead of the group, and does not work ahead. A rater stays within their own
 > folder and does not open or browse other raters' directories.
 
+**Labels:** SN (label 1) and CP (label 2), in one mask (see
+[segmentation_protocol.md](segmentation_protocol.md)).
+
 ## What the rater does
 
 For each assigned subject, the rater:
 
 1. Opens `inputs/<sub>/image.nii.gz` in ITK-SNAP.
-2. Creates one SN segmentation, blindly, consistent with Phase 4 behavior.
+2. Creates one segmentation (SN, then CP), blindly, consistent with Phase 4
+   behavior.
 
 ## Inputs / outputs
 
