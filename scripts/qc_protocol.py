@@ -4,7 +4,7 @@
 The cerebral peduncle (CP, label 2) is a reference region: what matters is that
 it follows the rules in docs/segmentation_protocol.md and gives a stable
 reference intensity, more than its overlap between raters. For one phase and
-attempt this writes, under <qc-root>/<phase>/a<N>/protocol/:
+attempt this writes, under <qc-root>/<phase>/<a<N>|latest>/protocol/:
 
     protocol_per_mask.csv   per rater x scan: labels present, SN/CP volume,
                             hemispheres covered, CP slice coverage vs SN, CP
@@ -14,10 +14,14 @@ attempt this writes, under <qc-root>/<phase>/a<N>/protocol/:
                             SN HD95 and CP Dice vs the other raters, SN volume
                             / scan median, CP mean intensity deviation from the
                             scan median, contrast minus the scan median
+    verdict.csv/.md         only for a phase with `criteria` in phases.yaml
+                            (SNIT calibration): pass/review per rater and the
+                            scans behind each missed criterion
 
-    python scripts/qc_protocol.py --phase phase4 \
+    python scripts/qc_protocol.py --phase phase5 \
         --workspace ~/path/to/ManSeg_Workspace \
         --qc-root   ~/path/to/ManSeg_Workspace/qc
+    python scripts/qc_protocol.py --phase phase5 --latest   # include _a2 re-segmentations
 """
 from __future__ import annotations
 
@@ -33,6 +37,7 @@ import utils
 import qc_analysis as qa
 
 SN, CP = utils.LABELS["SN"], utils.LABELS["CP"]
+CRITERIA = ("sn_dice_min", "sn_hd95_max_mm", "sn_volume_tol", "cp_mean_tol", "min_scans")
 
 
 def _axes(affine):
@@ -131,13 +136,14 @@ def agreement(masks, rows, zooms):
 
 
 def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=None):
-    """Protocol rows for every rater mask of one phase/attempt, plus per-scan
-    agreement wherever >= 2 raters segmented a scan. Returns a dict of
-    DataFrames, also written to <out_dir>/protocol/ when out_dir is given."""
+    """Protocol rows for every rater mask of one phase, plus per-scan agreement
+    wherever >= 2 raters segmented a scan. `attempt` is an attempt number or
+    "latest" (each rater's highest attempt per scan, e.g. a calibration redo).
+    Returns a dict of DataFrames, also written to <out_dir>/protocol/."""
     pcfg = phases[phase_key]
     labels = utils.phase_labels(pcfg)
     phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
-    tag = {"phase": phase_key, "attempt": f"a{attempt}"}
+    tag = {"phase": phase_key, "attempt": "latest" if attempt == "latest" else f"a{attempt}"}
     prot, agree = [], []
     for sub in utils.find_subjects(phase_dir, raters):
         assigned = [r for r in raters if utils.input_dir(phase_dir, r, sub).is_dir()]
@@ -145,7 +151,11 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
         image = affine = zooms = None
         masks, rows = {}, {}
         for r in assigned:
-            path = qa.find_rater_attempts(utils.output_dir(phase_dir, r, sub), r)["attempts"].get(attempt)
+            found = qa.find_rater_attempts(utils.output_dir(phase_dir, r, sub), r)["attempts"]
+            if attempt == "latest":
+                path = found[max(found)] if found else None
+            else:
+                path = found.get(attempt)
             row = tag | {"subject": sub, "rater": r, "mask": path.name if path else "(missing)"}
             if path is None or image_path is None:
                 prot.append(row | {"flags": "mask missing" if path is None else "image missing"})
@@ -173,6 +183,66 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
     return tables
 
 
+def verdict(tables, criteria, raters):
+    """Pass/review per rater against a phase's `criteria`, with the scans
+    behind each missed criterion."""
+    prot, agree = tables["protocol_per_mask"], tables["agreement_per_scan"]
+    if agree.empty:
+        agree = pd.DataFrame(columns=["rater", "subject", "sn_dice", "sn_hd95",
+                                      "sn_volume_ratio", "cp_mean_dev"], dtype=float)
+    n_scans = prot["subject"].nunique()
+    rows = []
+    for r in raters:
+        p, a = prot[prot["rater"] == r], agree[agree["rater"] == r]
+        flagged = set(p.loc[p["flags"].fillna("") != "", "subject"])
+        low = set(a.loc[(a["sn_dice"] < criteria["sn_dice_min"]) |
+                        (a["sn_hd95"] > criteria["sn_hd95_max_mm"]), "subject"])
+        # negated <= so that a NaN deviation counts as out of tolerance
+        vol_off = set(a.loc[~((a["sn_volume_ratio"] - 1).abs() <= criteria["sn_volume_tol"]),
+                            "subject"])
+        cp_off = set(a.loc[~(a["cp_mean_dev"].abs() <= criteria["cp_mean_tol"]), "subject"])
+        checks = {
+            "protocol": (len(p) == n_scans and not flagged, flagged),
+            "sn_agreement": (a["sn_dice"].median() >= criteria["sn_dice_min"] and
+                             a["sn_hd95"].median() <= criteria["sn_hd95_max_mm"], low),
+            "sn_volume": (len(a) - len(vol_off) >= criteria["min_scans"], vol_off),
+            "cp_reference": (len(a) - len(cp_off) >= criteria["min_scans"], cp_off),
+        }
+        review = set().union(*(scans for ok, scans in checks.values() if not ok))
+        rows.append({"rater": r, "sn_dice_median": a["sn_dice"].median(),
+                     "sn_hd95_median": a["sn_hd95"].median(),
+                     "sn_volume_scans_ok": len(a) - len(vol_off),
+                     "cp_mean_scans_ok": len(a) - len(cp_off),
+                     **{name: bool(ok) for name, (ok, _) in checks.items()},
+                     "verdict": "pass" if all(ok for ok, _ in checks.values()) else "review",
+                     "review_scans": " ".join(sorted(review))})
+    return pd.DataFrame(rows)
+
+
+def verdict_markdown(v, criteria, title):
+    c = criteria
+    mark = {True: "ok", False: "**miss**"}
+    lines = [
+        f"# Calibration verdict — {title}", "",
+        "Consistency with the other raters on the same scans (criteria in "
+        f"`config/phases.yaml`): no protocol flags; median SN Dice ≥ {c['sn_dice_min']} "
+        f"and median SN HD95 ≤ {c['sn_hd95_max_mm']} mm; SN volume within "
+        f"±{c['sn_volume_tol']:.0%} and CP mean intensity within ±{c['cp_mean_tol']:.0%} "
+        f"of the scan median on ≥ {c['min_scans']} scans.", "",
+        "| Rater | Protocol | SN Dice / HD95 | SN volume (scans ok) | CP mean (scans ok) "
+        "| Verdict | Scans to review |",
+        "|---|---|---|---|---|---|---|"]
+    for _, r in v.iterrows():
+        lines.append(
+            f"| {r['rater']} | {mark[bool(r['protocol'])]} "
+            f"| {r['sn_dice_median']:.3f} / {r['sn_hd95_median']:.2f} mm, "
+            f"{mark[bool(r['sn_agreement'])]} "
+            f"| {r['sn_volume_scans_ok']}, {mark[bool(r['sn_volume'])]} "
+            f"| {r['cp_mean_scans_ok']}, {mark[bool(r['cp_reference'])]} "
+            f"| {r['verdict']} | {r['review_scans'] or '—'} |")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -183,20 +253,26 @@ def main():
     ap.add_argument("--qc-root", type=Path, default=None,
                     help="Override qc_output_root from paths.yaml.")
     ap.add_argument("--attempt", type=int, default=1, help="Attempt to check (default: 1).")
+    ap.add_argument("--latest", action="store_true",
+                    help="Check each rater's highest attempt per scan (re-segmentations).")
     args = ap.parse_args()
 
     paths, phases, raters = utils.load_config(args.config_dir)
+    criteria = phases[args.phase].get("criteria")
+    if criteria and any(k not in criteria for k in CRITERIA):
+        ap.error(f"{args.phase} criteria must define {', '.join(CRITERIA)}")
     workspace = args.workspace or Path(paths["workspace_root"])
-    out_dir = (Path(args.qc_root or paths["qc_output_root"]) / args.phase /
-               qa.attempt_dirname(args.attempt))
-    tables = compute_protocol(args.phase, workspace, phases, raters, args.attempt, out_dir)
+    folder = "latest" if args.latest else qa.attempt_dirname(args.attempt)
+    out_dir = Path(args.qc_root or paths["qc_output_root"]) / args.phase / folder
+    tables = compute_protocol(args.phase, workspace, phases, raters,
+                              "latest" if args.latest else args.attempt, out_dir)
     prot, agree = tables["protocol_per_mask"], tables["agreement_per_scan"]
     if prot.empty:
         print(f"{args.phase}: no subjects found in {workspace}")
         return 1
 
     flagged = prot[prot["flags"].fillna("") != ""]
-    print(f"{args.phase} a{args.attempt}: {len(prot)} rater masks, {len(flagged)} flagged")
+    print(f"{args.phase} {folder}: {len(prot)} rater masks, {len(flagged)} flagged")
     for _, r in flagged.iterrows():
         print(f"  {r['rater']}/{r['subject']}: {r['flags']}")
     if not agree.empty:
@@ -204,6 +280,14 @@ def main():
         cols = ["sn_dice", "sn_hd95", "cp_dice", "sn_volume_ratio", "cp_mean_dev", "contrast_diff"]
         print("\n-- per rater, median across scans (vs the other raters) --")
         print(agree.groupby("rater")[cols].median().to_string())
+    if criteria:
+        v = verdict(tables, criteria, raters)
+        pdir = out_dir / "protocol"
+        v.to_csv(pdir / "verdict.csv", index=False)
+        (pdir / "verdict.md").write_text(verdict_markdown(v, criteria, f"{args.phase} ({folder})"))
+        print("\n-- verdict --")
+        print(v[["rater", "protocol", "sn_agreement", "sn_volume", "cp_reference",
+                 "verdict", "review_scans"]].to_string(index=False))
     print(f"\nTables written to {out_dir / 'protocol'}/")
     return 0
 

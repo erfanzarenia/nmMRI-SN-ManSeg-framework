@@ -17,6 +17,8 @@ axial, sagittal, and coronal views.
 
 `Tools → Image Contrast` adjusts brightness/contrast until the SN is clearly
 visible without washing out the background. Settings are kept consistent across slices within a subject.
+SNIT images (Phases 5–6) combine echoes, so their contrast is set afresh rather
+than reused from Echo 1 images.
 
 ## Overlay the expert mask (phases 1–2 only)
 
@@ -51,7 +53,8 @@ slider and visibility toggle control how it is shown.
 `Segmentation → Save As`, into the subject's `outputs/<sub>/` folder, named with
 the rater's initials. One file holds every label (SN, and CP from Phase 3):
 
-- Phases 3–5 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
+- Phases 3–6 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
+  A Phase 5 re-segmentation, when requested, is **`<INITIALS>_mask_a2.nii.gz`**.
 - Phases 1–2 (two attempts): **`<INITIALS>_mask_a1.nii.gz`** then
   **`<INITIALS>_mask_a2.nii.gz`** (see [phase2.md](phase2.md)).
 

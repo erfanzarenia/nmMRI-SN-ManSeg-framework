@@ -31,6 +31,8 @@
 #   labels      labels segmented, all in one mask file (values as in
 #               docs/SN_label_definition.txt): SN = 1, CP = 2 (cerebral
 #               peduncle reference region, from Phase 3). Default: [SN]
+#   criteria    optional per-rater pass criteria, checked by qc_protocol.py
+#               (see docs/qc.md)
 
 seed: 7
 id_prefix: "sub-"
@@ -73,6 +75,24 @@ phase4:
   labels: [SN, CP]
 
 phase5:
+  name: snit_calibration
+  pool: study
+  # Fixed SNIT scans: sub-1093, sub-5064, two more adolescents (sub-5xxx) and
+  # one more adult (sub-1xxx); none is a production hidden repeat. All five keep
+  # their production assignment (phase6) too, under other workspace IDs.
+  subjects: [sub-1093, sub-5064, sub-5005, sub-5066, sub-1038]
+  assignment: shared
+  expert_mask: false
+  attempts: 1
+  labels: [SN, CP]
+  criteria:
+    sn_dice_min: 0.60     # median over scans of SN Dice vs the other raters
+    sn_hd95_max_mm: 3.0   # median over scans of SN HD95 vs the other raters
+    sn_volume_tol: 0.30   # SN volume within this fraction of the scan median...
+    cp_mean_tol: 0.05     # CP mean intensity within this fraction of the scan median...
+    min_scans: 4          # ...on at least this many of the five scans
+
+phase6:
   name: production
   pool: study
   n_subjects: all

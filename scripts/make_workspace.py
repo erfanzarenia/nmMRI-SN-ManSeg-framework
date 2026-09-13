@@ -27,7 +27,7 @@ import utils
 RATER_DOCS = [
     "overview.md", "segmentation_protocol.md", "itksnap_instructions.md",
     "SN_label_definition.txt",
-    "phase1.md", "phase2.md", "phase3.md", "phase4.md", "phase5.md",
+    "phase1.md", "phase2.md", "phase3.md", "phase4.md", "phase5.md", "phase6.md",
 ]
 
 

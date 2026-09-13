@@ -39,17 +39,20 @@ python scripts/qc_protocol.py --phase phase4      # CP rules + reference intensi
 
 ## Phases
 
-| Phase | Name       | Expert mask | Labels  | Output              | Subjects    |
-|-------|------------|-------------|---------|---------------------|-------------|
-| 1     | Playground | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
-| 2     | Practice   | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
-| 3     | Mock exam  | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 4     | Exam       | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 5     | Production | no          | SN + CP | `<INIT>_mask`       | partitioned |
+| Phase | Name             | Expert mask | Labels  | Output              | Subjects    |
+|-------|------------------|-------------|---------|---------------------|-------------|
+| 1     | Playground       | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 2     | Practice         | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 3     | Mock exam        | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 4     | Exam             | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 5     | SNIT calibration | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 6     | Production       | no          | SN + CP | `<INIT>_mask`       | partitioned |
 
-See [docs/overview.md](docs/overview.md) for the full workflow and workspace
-layout, [docs/segmentation_protocol.md](docs/segmentation_protocol.md) for what
-is segmented, and [docs/qc.md](docs/qc.md) for QC details.
+Phases 1–4 use the labeled set (Echo 1 images); Phases 5–6 use SNIT
+combined-echo images. See [docs/overview.md](docs/overview.md) for the full
+workflow and workspace layout,
+[docs/segmentation_protocol.md](docs/segmentation_protocol.md) for what is
+segmented, and [docs/qc.md](docs/qc.md) for QC details.
 
 ## Notes
 
@@ -66,5 +69,7 @@ is segmented, and [docs/qc.md](docs/qc.md) for QC details.
   never moves an existing subject or ID (`--regenerate` rebuilds everything
   from the seed). Draws are reproducible from the `seed`; still, keep a private
   backup of the key.
+- The five SNIT calibration scans are a fixed list in phases.yaml. They also
+  keep their production assignment, under other workspace IDs.
 
 Contact: Erfan Zarenia (ezarenia@uwo.ca).

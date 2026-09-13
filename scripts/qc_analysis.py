@@ -51,8 +51,10 @@ def find_rater_attempts(out_dir, rater):
     naming convention (`<rater>_mask_a<N>...`).
 
     Returns dict: attempts {N: Path} for each detected attempt number, files
-    (all matching), flags (anomaly notes). A lone file with no recognizable
-    `_a<N>` token is treated as attempt 1 (a common single-attempt / typo case).
+    (all matching), flags (anomaly notes). The single-attempt name
+    `<rater>_mask.nii.gz` is attempt 1, so a later `_a2` re-segmentation can sit
+    beside it. A lone file with no recognizable `_a<N>` token is also treated as
+    attempt 1, and flagged (a common typo case).
     """
     out_dir = Path(out_dir)
     files = sorted(glob(str(out_dir / f"{rater}_mask*.nii.gz")) +
@@ -71,6 +73,10 @@ def find_rater_attempts(out_dir, rater):
             unrec.append(Path(f))
         if not re.fullmatch(rf"{rater}_mask(_a\d+)?\.nii(\.gz)?", stem):
             flags.append(f"non-standard filename: {stem}")
+    single = [p for p in unrec if re.fullmatch(rf"{rater}_mask\.nii(\.gz)?", p.name)]
+    if single and 1 not in attempts:                 # single-attempt name -> a1
+        attempts[1] = single[0]
+        unrec.remove(single[0])
     if unrec and not attempts:
         attempts[1] = unrec[0]                       # sole non-standard file -> a1
         flags.append(f"unrecognized attempt token; treated {unrec[0].name} as a1")

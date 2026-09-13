@@ -2,7 +2,7 @@
 
 Manual segmentation of the substantia nigra (SN) on neuromelanin-sensitive MRI
 (NM-MRI), with the cerebral peduncle (CP) segmented as a reference region. The
-work is organized into five phases that gradually train raters, ensure
+work is organized into six phases that gradually train raters, ensure
 consistency, and produce reliable data for analysis. Each phase builds on the
 previous one; later phases are not opened until the earlier ones are complete.
 
@@ -10,35 +10,39 @@ previous one; later phases are not opened until the earlier ones are complete.
 
 - Early phases (1–2): learning and calibration against expert masks.
 - Middle phases (3–4): a blind rehearsal, then the reliability measurement.
-- Final phase (5): generation of the research dataset at scale.
+- Bridge phase (5): calibration on SNIT production images (combined echoes).
+- Final phase (6): generation of the research dataset at scale.
 
 In one line: phase 1 learns what correct looks like, phase 2 calibrates, phase 3
-rehearses blind, phase 4 measures reliability, phase 5 scales.
+rehearses blind, phase 4 measures reliability, phase 5 transfers to SNIT images,
+phase 6 scales.
 
 ## Phases
 
-| Phase | Name       | Pool    | Expert mask | Labels  | Rater output        | Assignment  |
-|-------|------------|---------|-------------|---------|---------------------|-------------|
-| 1     | Playground | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
-| 2     | Practice   | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
-| 3     | Mock exam  | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 4     | Exam       | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 5     | Production | study   | no          | SN + CP | `<INIT>_mask`       | partitioned |
+| Phase | Name             | Pool    | Expert mask | Labels  | Rater output        | Assignment  |
+|-------|------------------|---------|-------------|---------|---------------------|-------------|
+| 1     | Playground       | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 2     | Practice         | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
+| 3     | Mock exam        | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 4     | Exam             | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 5     | SNIT calibration | study   | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 6     | Production       | study   | no          | SN + CP | `<INIT>_mask`       | partitioned |
 
 - **shared** — every rater segments the same subjects (enables inter-rater
   comparison).
 - **partitioned** — subjects are divided across raters (scale; each subject
-  segmented once), with a hidden overlap kept for reliability (see Phase 5).
+  segmented once), with a hidden overlap kept for reliability (see Phase 6).
 - **labeled** vs **study** — two disjoint subject pools that live in different
-  places (with / without expert masks). Each is a *pool* in
-  [`config/paths.yaml`](../config/paths.yaml).
+  places. The labeled (training) set has expert masks and Echo 1 images; the
+  SNIT study set has no expert masks and combined-echo images. Each is a *pool*
+  in [`config/paths.yaml`](../config/paths.yaml).
 - **SN / CP** — label 1 = substantia nigra; label 2 = cerebral peduncle, a
   reference region added from Phase 3 (Phases 1–2 are SN-only). One mask file
   holds both; the rules are in
   [segmentation_protocol.md](segmentation_protocol.md).
 
 Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) ·
-[phase4](phase4.md) · [phase5](phase5.md). Protocol:
+[phase4](phase4.md) · [phase5](phase5.md) · [phase6](phase6.md). Protocol:
 [segmentation_protocol](segmentation_protocol.md). Tool:
 [itksnap_instructions](itksnap_instructions.md). QC: [qc](qc.md).
 

@@ -112,12 +112,15 @@ python scripts/qc_protocol.py --phase phase4 \
     --qc-root   ~/path/to/ManSeg_Workspace/qc
 ```
 
-Writes to `<qc-root>/<phase>/a<N>/protocol/` (attempt 1 unless `--attempt N`):
+Writes to `<qc-root>/<phase>/a<N>/protocol/` (attempt 1 unless `--attempt N`;
+`--latest` takes each rater's highest attempt per scan and writes to
+`<phase>/latest/protocol/`):
 
 | File                     | Contents |
 |--------------------------|----------|
 | `protocol_per_mask.csv`  | per rater × scan: labels present, SN/CP volume, hemispheres covered, CP slice coverage vs SN, CP voxels touching SN, mean SN and CP intensity, contrast `(SN − CP) / CP`, and rule flags |
 | `agreement_per_scan.csv` | per rater × scan with ≥ 2 raters: mean SN Dice, SN HD95 and CP Dice vs the other raters; SN volume ÷ scan median (`sn_volume_ratio`); CP mean intensity vs scan median (`cp_mean_dev`); contrast minus scan median (`contrast_diff`) |
+| `verdict.csv`, `verdict.md` | only for a phase with `criteria` (Phase 5): pass/review per rater, see below |
 
 **CP criteria.** Every mask is expected to raise no flags:
 
@@ -132,6 +135,35 @@ rater's mean CP intensity is expected within ±5% of the scan median
 voxels inside CP. CP Dice is informative only: CP is a reference region, not a
 boundary to reproduce.
 
+### Calibration verdict (Phase 5)
+
+The SNIT calibration has a `criteria` block in `phases.yaml`, so its run also
+writes `verdict.csv` and `verdict.md`: one line per rater, `pass` only when all
+four criteria hold.
+
+| Criterion      | Rule (value in `phases.yaml`) |
+|----------------|-------------------------------|
+| `protocol`     | a mask for every scan, none flagged |
+| `sn_agreement` | median over scans of `sn_dice` ≥ `sn_dice_min` (0.60) and of `sn_hd95` ≤ `sn_hd95_max_mm` (3.0) |
+| `sn_volume`    | abs(`sn_volume_ratio` − 1) ≤ `sn_volume_tol` (0.30) on ≥ `min_scans` (4) scans |
+| `cp_reference` | abs(`cp_mean_dev`) ≤ `cp_mean_tol` (0.05) on ≥ `min_scans` scans |
+
+The thresholds sit near the edge of the agreement raters already reach (pooled
+Phase 1–2 QC, July 2026: inter-rater SN Dice 0.67 ± 0.06, HD95 2.1 ± 0.9 mm),
+so they catch real shifts rather than normal variation; the volume rule targets
+the systematic over- or under-segmentation a contrast change tends to cause.
+`review_scans` lists the scans behind each missed criterion. The rater
+re-segments only those, as `<INIT>_mask_a2.nii.gz`, and the re-check runs on
+each rater's latest mask:
+
+```bash
+python scripts/qc_protocol.py --phase phase5 --latest
+```
+
+Calibration scans also keep their production assignment, under other workspace
+IDs (the split never moves existing assignments); the production masks are the
+ones used for analysis.
+
 ## Which phase to QC
 
 - **Phase 2 (Practice)** — rater-vs-expert calibration (shared, has expert
@@ -141,7 +173,10 @@ boundary to reproduce.
   section 4 flags are fed back before the Exam.
 - **Phase 4 (Exam)** — inter-rater reliability (shared, blind). The primary QC
   target, for SN (sections 1–3) and CP (section 4).
-- **Phase 5 (Production)** — partitioned, so pairwise Dice is computed only on
+- **Phase 5 (SNIT calibration)** — shared, blind, on SNIT combined-echo images;
+  the section 4 verdict gates production. `qc_metrics.py --phase phase5` adds
+  pairwise SN detail when a verdict needs it.
+- **Phase 6 (Production)** — partitioned, so pairwise Dice is computed only on
   the hidden overlap subset, giving an ongoing reliability check on the
   production data. `volumes.csv` covers the rest as a distribution sanity check,
   and section 4 checks the CP rules on every mask.

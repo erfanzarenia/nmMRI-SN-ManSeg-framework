@@ -13,7 +13,7 @@
 # normalized to gzip-compressed .nii.gz when the workspace is built.
 
 pools:
-  # Labeled set: NM images + expert SN masks.
+  # Labeled set (training, phases 1-4): Echo 1 NM images + expert SN masks.
   labeled:
     data_root: /path/to/labeled_dataset
     layout: flat
@@ -21,11 +21,12 @@ pools:
     expert_mask_pattern: "{subject}/NM_echo1*_SN.nii.gz"
     subjects: subjects_labeled.txt
 
-  # Study set: unlabeled NM images.
+  # SNIT study set (SNIT calibration + production): unlabeled NM images with the
+  # echoes combined by sum of squares (BIDS suffix T2starw), not Echo 1.
   study:
     data_root: /path/to/study_bids
     layout: bids
-    image_pattern: "{subject}/anat/{subject}_acq-NM_run-01_echo-1_echo-1_part-mag_GRE.nii.gz"
+    image_pattern: "{subject}/anat/{subject}_acq-NM_run-01_T2starw.nii.gz"
     expert_mask_pattern: null
     subjects: subjects_study.txt
 
