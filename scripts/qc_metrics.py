@@ -89,7 +89,7 @@ def main():
             print(f"  wrote {path} ({len(rows)} rows)")
             wrote = True
     if not wrote:
-        print("  no overlapping masks found — nothing to compare.")
+        print("  no overlapping masks found; nothing to compare.")
     return 0
 
 

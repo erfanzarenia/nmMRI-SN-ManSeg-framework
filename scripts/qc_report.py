@@ -26,7 +26,7 @@ def df_to_md(df, cols=None, floatfmt="{:.3f}"):
     def fmt(v):
         if isinstance(v, (float, np.floating)):
             if pd.isna(v):
-                return "—"
+                return "n/a"
             return str(int(v)) if float(v).is_integer() else floatfmt.format(v)
         return "" if v is None else str(v)
 
@@ -94,9 +94,9 @@ def compute_findings(tag, tables):
 
 
 METHODS = (
-    "**Methods.** Dice and Jaccard (overlap), and surface distances in physical "
-    "mm — max Hausdorff (HD), 95th-percentile Hausdorff (HD95, robust to "
-    "single-voxel outliers) and average symmetric surface distance (ASSD) — were "
+    "**Methods.** Dice and Jaccard (overlap) and three surface distances in physical "
+    "mm, namely max Hausdorff (HD), 95th-percentile Hausdorff (HD95, robust to "
+    "single-voxel outliers) and average symmetric surface distance (ASSD), were "
     "computed on the SN label (value 1) at the native voxel spacing "
     "(0.4×0.4×1.0 mm). Each segmentation attempt (`a1`, `a2`, …) is analyzed "
     "independently; the **attempts-average** is the mean of the per-attempt "
@@ -119,7 +119,7 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
     n_sub = rve["subject"].nunique() if rve is not None and not rve.empty else (
         rvr["subject"].nunique() if rvr is not None and not rvr.empty else 0)
 
-    A(f"# QC Report — {tag}\n")
+    A(f"# QC Report: {tag}\n")
     A(f"Subjects: **{n_sub}** · Raters: **R1, R2, R3** · "
       "Comparison: rater-vs-expert and rater-vs-rater.\n")
     A(METHODS)
@@ -139,8 +139,8 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
         A(f"- **Inter-rater** (grand mean over {int(s['n'])} pair-scans): "
           f"Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**, "
           f"HD95 {s['hd95_mean']:.2f} mm. "
-          f"Least concordant pair: **{f.get('least_concordant_pair','—')}**, "
-          f"most concordant: **{f.get('most_concordant_pair','—')}**.")
+          f"Least concordant pair: **{f.get('least_concordant_pair','n/a')}**, "
+          f"most concordant: **{f.get('most_concordant_pair','n/a')}**.")
     A("")
 
     # data quality
@@ -244,7 +244,7 @@ def _bullets(f):
                  f"pair agrees least; {f['most_concordant_pair']} agrees most.")
     if "anomalies" in f and not f["anomalies"].empty:
         b.append(f"**Data issues:** {len(f['anomalies'])} file/availability flag(s) "
-                 "— see inventory; resolve before final analysis.")
+                 "(see inventory); resolve before final analysis.")
     return b
 
 
@@ -254,7 +254,7 @@ def overall_report(phase_findings, overall_tables, qc_root):
     rdir.mkdir(parents=True, exist_ok=True)
     L = []
     A = L.append
-    A("# QC Report — Overall (Phase 1 + Phase 2)\n")
+    A("# QC Report: Overall (Phase 1 + Phase 2)\n")
     A(METHODS)
 
     rve = overall_tables.get("rater_vs_expert_per_scan")

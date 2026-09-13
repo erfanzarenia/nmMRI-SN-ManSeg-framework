@@ -223,7 +223,7 @@ def verdict_markdown(v, criteria, title):
     c = criteria
     mark = {True: "ok", False: "**miss**"}
     lines = [
-        f"# Calibration verdict — {title}", "",
+        f"# Calibration verdict: {title}", "",
         "Consistency with the other raters on the same scans (criteria in "
         f"`config/phases.yaml`): no protocol flags; median SN Dice ≥ {c['sn_dice_min']} "
         f"and median SN HD95 ≤ {c['sn_hd95_max_mm']} mm; SN volume within "
@@ -239,7 +239,7 @@ def verdict_markdown(v, criteria, title):
             f"{mark[bool(r['sn_agreement'])]} "
             f"| {r['sn_volume_scans_ok']}, {mark[bool(r['sn_volume'])]} "
             f"| {r['cp_mean_scans_ok']}, {mark[bool(r['cp_reference'])]} "
-            f"| {r['verdict']} | {r['review_scans'] or '—'} |")
+            f"| {r['verdict']} | {r['review_scans'] or 'none'} |")
     return "\n".join(lines) + "\n"
 
 

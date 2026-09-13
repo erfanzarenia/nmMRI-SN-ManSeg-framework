@@ -1,4 +1,4 @@
-# Phase 2 — Practice (Calibration)
+# Phase 2: Practice (Calibration)
 
 **Purpose:** produce SN segmentations and calibrate against the expert masks
 before blind work begins. The aim is a stable, reproducible approach with reduced
@@ -46,6 +46,6 @@ estimate of consistency and reproducibility. Files in `inputs/` are not modified
 ## Key idea
 
 The aim is not only the correct SN location but a consistent, reproducible
-segmentation style — superior/inferior extent, edge behavior, continuity across
+segmentation style: superior/inferior extent, edge behavior, continuity across
 slices, and how uncertain boundaries are handled. The expert masks serve as
 calibration guidance.

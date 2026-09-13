@@ -1,4 +1,4 @@
-# Phase 3 — Mock Exam (Blind Pilot)
+# Phase 3: Mock Exam (Blind Pilot)
 
 **Purpose:** a low-stakes rehearsal of real exam conditions on a small set before
 the scored Exam. Segmentation is fully blind (no expert mask), exactly as in

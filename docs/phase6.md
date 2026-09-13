@@ -1,4 +1,4 @@
-# Phase 6 — Production (Real Dataset)
+# Phase 6: Production (Real Dataset)
 
 **Purpose:** generate the final dataset for analysis. Subjects are
 **partitioned** across raters so each is segmented once and coverage scales. This

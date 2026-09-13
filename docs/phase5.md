@@ -1,4 +1,4 @@
-# Phase 5 — SNIT Calibration (Bridge to Production)
+# Phase 5: SNIT Calibration (Bridge to Production)
 
 **Purpose:** carry the protocol over to the exact images used in production.
 Phases 1–4 train on Echo 1 images; SNIT production images combine all echoes.

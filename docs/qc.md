@@ -48,9 +48,9 @@ The worst-subject ordering (`--top-n`) flags cases to review first.
 
 ## 3. Comprehensive QC (metrics + figures + reports)
 
-For a full QC pass — adding **Hausdorff** distances (max, HD95, ASSD) alongside
-Dice, the complete reporting hierarchy, publication figures, worst-slice
-montages and Markdown reports — use the `run_qc.py` driver. It reuses the same
+For a full QC pass, use the `run_qc.py` driver: it adds **Hausdorff** distances
+(max, HD95, ASSD) alongside Dice, the complete reporting hierarchy, publication
+figures, worst-slice montages and Markdown reports. It reuses the same
 `utils.py` and reads the same workspace; expert-guided phases (1–2) also get
 rater-vs-expert outputs.
 
@@ -66,7 +66,7 @@ python scripts/run_qc.py \
 phase from the file names (it does not trust the configured count) and runs the
 **whole analysis independently for each attempt**, plus an **attempts-average**
 that is the **mean of the per-attempt metrics** for each scan/rater. Nothing
-assumes a fixed number of attempts — each scan is averaged over only the attempts
+assumes a fixed number of attempts: each scan is averaged over only the attempts
 it has (`n_attempts` records how many), and a single-attempt phase gets just
 `a1/`. Each phase's QC directory is therefore:
 
@@ -80,8 +80,8 @@ qc/summary/                        # pooled across phases (attempts-average wher
 ```
 
 Each per-attempt folder mirrors the same outputs (the average folder has the
-metric tables and agreement figures but no slice montages — there is no single
-mask to draw):
+metric tables and agreement figures but no slice montages, since there is no
+single mask to draw):
 
 | Area            | Script            | Output                                                        |
 |-----------------|-------------------|---------------------------------------------------------------|
@@ -93,8 +93,8 @@ mask to draw):
 | Reports         | `qc_report.py`    | `<phase>/<attempt>/reports/<phase>_<attempt>_qc_report.md` and `summary/overall_qc_report.md` |
 
 The attempts-average is the per-scan/rater **mean of the per-attempt metrics**
-(Dice, Hausdorff, volumes, …), mirroring every other table — not a combined
-mask. Companion `attempts_reproducibility.csv` records each rater's own
+(Dice, Hausdorff, volumes, …), mirroring every other table; it is not a
+combined mask. Companion `attempts_reproducibility.csv` records each rater's own
 attempt-to-attempt agreement (a_i vs a_j). The original `qc_metrics.py`
 (latest-attempt Dice only) still runs into each phase's `legacy_scripts/` as a
 cross-check. Each report opens with a Methods note; start at
@@ -166,17 +166,17 @@ ones used for analysis.
 
 ## Which phase to QC
 
-- **Phase 2 (Practice)** — rater-vs-expert calibration (shared, has expert
+- **Phase 2 (Practice)**: rater-vs-expert calibration (shared, has expert
   masks).
-- **Phase 3 (Mock exam)** — pairwise inter-rater on the blind rehearsal set; a
+- **Phase 3 (Mock exam)**: pairwise inter-rater on the blind rehearsal set; a
   sanity check before the real Exam. It is the first phase with CP, so the
   section 4 flags are fed back before the Exam.
-- **Phase 4 (Exam)** — inter-rater reliability (shared, blind). The primary QC
+- **Phase 4 (Exam)**: inter-rater reliability (shared, blind). The primary QC
   target, for SN (sections 1–3) and CP (section 4).
-- **Phase 5 (SNIT calibration)** — shared, blind, on SNIT combined-echo images;
+- **Phase 5 (SNIT calibration)**: shared, blind, on SNIT combined-echo images;
   the section 4 verdict gates production. `qc_metrics.py --phase phase5` adds
   pairwise SN detail when a verdict needs it.
-- **Phase 6 (Production)** — partitioned, so pairwise Dice is computed only on
+- **Phase 6 (Production)**: partitioned, so pairwise Dice is computed only on
   the hidden overlap subset, giving an ongoing reliability check on the
   production data. `volumes.csv` covers the rest as a distribution sanity check,
   and section 4 checks the CP rules on every mask.

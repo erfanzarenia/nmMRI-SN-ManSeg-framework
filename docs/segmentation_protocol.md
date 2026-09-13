@@ -12,7 +12,7 @@ What is segmented, and the rules for each label. Label values come from
 
 Phases 1–2 are SN-only, so their masks never contain CP.
 
-## SN — substantia nigra (label 1)
+## SN: substantia nigra (label 1)
 
 The neuromelanin-bright band in the ventral midbrain, just dorsal (posterior) to
 the crus cerebri. It is segmented in both hemispheres, on every axial slice
@@ -23,7 +23,7 @@ preferred. The expert masks of Phases 1–2 are the reference for extent and edg
 behavior, and `Substantia_Nigra_Anatomical_Borders.pdf` (workspace `docs/`)
 summarizes the anatomical borders.
 
-## CP — cerebral peduncle (label 2)
+## CP: cerebral peduncle (label 2)
 
 **What:** the crus cerebri, the white-matter band forming the anterior part of
 the cerebral peduncle, anterolateral to the SN. On NM-MRI it is a fairly
@@ -47,15 +47,5 @@ matters more than covering the whole peduncle.
    lateral edge of the peduncle.
 5. **When unsure, leave it out.**
 
-SN is segmented first, then CP on the same slices.
-
-## Common mistakes
-
-- CP touching SN, or painted over it (see **Paint over** in the ITK-SNAP guide).
-- CP including CSF, vessels, or edge voxels.
-- CP missing on an SN slice, or drawn on a slice without SN.
-- A label in one hemisphere only.
-- CP drawn with the SN label, or the reverse (the active label is checked before
-  drawing).
-
-These rules are checked centrally during QC.
+SN is segmented first, then CP on the same slices. These rules are checked
+centrally during QC.

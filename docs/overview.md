@@ -28,15 +28,15 @@ phase 6 scales.
 | 5     | SNIT calibration | study   | no          | SN + CP | `<INIT>_mask`       | shared      |
 | 6     | Production       | study   | no          | SN + CP | `<INIT>_mask`       | partitioned |
 
-- **shared** — every rater segments the same subjects (enables inter-rater
+- **shared**: every rater segments the same subjects (enables inter-rater
   comparison).
-- **partitioned** — subjects are divided across raters (scale; each subject
+- **partitioned**: subjects are divided across raters (scale; each subject
   segmented once), with a hidden overlap kept for reliability (see Phase 6).
-- **labeled** vs **study** — two disjoint subject pools that live in different
+- **labeled** vs **study**: two disjoint subject pools that live in different
   places. The labeled (training) set has expert masks and Echo 1 images; the
   SNIT study set has no expert masks and combined-echo images. Each is a *pool*
   in [`config/paths.yaml`](../config/paths.yaml).
-- **SN / CP** — label 1 = substantia nigra; label 2 = cerebral peduncle, a
+- **SN / CP**: label 1 = substantia nigra; label 2 = cerebral peduncle, a
   reference region added from Phase 3 (Phases 1–2 are SN-only). One mask file
   holds both; the rules are in
   [segmentation_protocol.md](segmentation_protocol.md).

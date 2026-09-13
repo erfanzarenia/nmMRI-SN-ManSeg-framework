@@ -215,10 +215,10 @@ def _write_readme(qc_root, phase_folders):
         for folder in phase_folders[ph]:
             if folder == qa.AVERAGE_DIR:
                 lines.append(f"│   ├── {folder}/  {{metrics, plots, reports}} + "
-                             "attempts_reproducibility.csv  — mean of per-attempt "
-                             "metrics (no montages: no single mask)")
+                             "attempts_reproducibility.csv  (mean of per-attempt "
+                             "metrics; no montages, since there is no single mask)")
             else:
-                lines.append(f"│   ├── {folder}/  {full}  — attempt {folder[1:]}")
+                lines.append(f"│   ├── {folder}/  {full}  (attempt {folder[1:]})")
         lines.append("│   └── legacy_scripts/  original qc_metrics.py / interrater_analysis.py cross-check")
     lines += ["└── summary/  (pooled across phases, attempts-average where available)",
               "    ├── metrics/   pooled CSVs + grand averages",

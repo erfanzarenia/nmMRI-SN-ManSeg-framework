@@ -1,4 +1,4 @@
-# Phase 1 — Playground (Familiarization)
+# Phase 1: Playground (Familiarization)
 
 **Purpose:** familiarization with ITK-SNAP and SN anatomy on NM-MRI, plus a
 first, low-pressure pass at producing segmentations. The goal is intuition for

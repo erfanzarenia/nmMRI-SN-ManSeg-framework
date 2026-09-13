@@ -1,4 +1,4 @@
-# Phase 4 — Exam (Reliability Test)
+# Phase 4: Exam (Reliability Test)
 
 **Purpose:** measure how consistent and accurate raters are under real annotation
 conditions. This is the scientifically important phase. Subjects are **shared**
