@@ -77,7 +77,8 @@ conda activate nmmri-manseg
 
 # 1. Configure config/: paths.yaml (pools + workspace), raters.json,
 #    phases.yaml, and the subject lists.
-# 2. Assign subjects to phases/raters (deterministic; seed from phases.yaml).
+# 2. Assign subjects to phases/raters (seed from phases.yaml). Append-only:
+#    re-running allocates new phases and never moves existing assignments.
 python scripts/split_subjects.py
 
 # 3. Build the workspace (--dry-run previews the tree first).

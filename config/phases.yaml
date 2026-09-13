@@ -2,7 +2,7 @@
 # split_subjects.py and make_workspace.py read this file.
 #
 # seed       Deterministic-random subject -> phase/rater assignment. The same
-#            seed reproduces the same split; override with --seed.
+#            seed reproduces the same draws; override with --seed.
 # id_prefix  Prefix for the anonymized workspace subject IDs.
 # id_width   Zero-padded width of the workspace ID counter.
 #            Workspace scans are RELABELED (e.g. sub-0001) so their IDs do not
@@ -10,10 +10,16 @@
 #            workspace -> source key is written to config/subjects_split.json
 #            (kept private; never shared with raters).
 #
+# The split is append-only: once config/subjects_split.json exists, every phase
+# in it keeps its subjects and IDs (matched by name, so a renumbered phase keeps
+# them) and split_subjects.py allocates only phases that are new here.
+#
 # Each phaseN block:
 #   name        slug for the workspace folder -> phaseN_<name>
 #   pool        pool to draw from (must match a pool in paths.yaml)
-#   n_subjects  number to allocate, or "all" for the remainder
+#   n_subjects  number to draw at random, or "all" for the remainder
+#   subjects    instead of n_subjects: explicit source IDs from the pool. They
+#               are not drawn from it, so they may also sit in a drawn phase.
 #   assignment  shared      -> every rater gets the same subjects
 #               partitioned -> subjects divided across raters
 #   overlap     partitioned only: fraction [0..1] of the phase's subjects also

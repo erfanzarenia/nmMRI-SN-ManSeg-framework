@@ -23,7 +23,8 @@ conda activate nmmri-manseg
 
 # Edit config/paths.yaml (data + workspace locations), raters.json, phases.yaml,
 # and the subject lists. Then:
-python scripts/split_subjects.py                  # deterministic split (seed in phases.yaml)
+python scripts/split_subjects.py --dry-run        # preview the split
+python scripts/split_subjects.py                  # write it (append-only; seed in phases.yaml)
 python scripts/make_workspace.py --dry-run        # preview the tree
 python scripts/make_workspace.py                  # build it (copies inputs)
 
@@ -55,7 +56,10 @@ layout, and [docs/qc.md](docs/qc.md) for QC details.
 - Source datasets may be BIDS-style or flat (`layout` per pool in
   [config/paths.yaml](config/paths.yaml)), with `.nii` or `.nii.gz` files;
   workspace inputs are normalized to gzip `.nii.gz`.
-- The split is fully determined by the subject lists, raters, and phase config
-  (including the `seed` in phases.yaml), so it is reproducible across machines.
+- The split is append-only: once `config/subjects_split.json` exists,
+  re-running `split_subjects.py` allocates only phases new to phases.yaml and
+  never moves an existing subject or ID (`--regenerate` rebuilds everything
+  from the seed). Draws are reproducible from the `seed`; still, keep a private
+  backup of the key.
 
 Contact: Erfan Zarenia (ezarenia@uwo.ca).
