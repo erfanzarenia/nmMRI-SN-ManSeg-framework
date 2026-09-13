@@ -92,7 +92,8 @@ conda activate nmmri-manseg
 #    re-running allocates new phases and never moves existing assignments.
 python scripts/split_subjects.py
 
-# 3. Build the workspace (--dry-run previews the tree first).
+# 3. Build the workspace (--dry-run previews it). Existing inputs are never
+#    overwritten, so re-running only adds what is missing.
 python scripts/make_workspace.py
 
 # 4. Raters segment in ITK-SNAP (see itksnap_instructions.md).
@@ -107,9 +108,10 @@ python scripts/qc_protocol.py --phase phase4
 
 These apply throughout and are repeated in every phase guide:
 
-- **Phases advance as a group.** A rater never starts the next phase until the
-  whole group is advanced together. No working ahead, and no opening or exploring
-  later phases.
+- **Phases advance as a group.** Raters who start together form a group, and a
+  rater never starts the next phase until their whole group is advanced
+  together. Raters who join later start at Phase 1 as a new group. No working
+  ahead, and no opening or exploring later phases.
 - **A rater stays in their own folder.** A rater never opens, browses, or copies
   from another rater's directories. segmentations are produced independently.
 - A rater works only within their own rater folder, identified by initials.

@@ -38,11 +38,12 @@ import utils
 import qc_analysis as qa
 
 # Consistent identity colors across every figure.
-RATER_COLORS = {"R1": "#1f77b4", "R2": "#2ca02c", "R3": "#d62728"}
+RATER_COLORS = {"R1": "#1f77b4", "R2": "#2ca02c", "R3": "#d62728",
+                "R4": "#17becf", "R5": "#9467bd", "R6": "#8c564b", "R7": "#e377c2"}
 PAIR_COLORS = {"R1-R2": "#9467bd", "R1-R3": "#8c564b", "R3-R2": "#e377c2",
                "R2-R3": "#e377c2"}
 MEAN_COLOR = "#111111"
-RATER_OVERLAY = {"R1": "#1f77b4", "R2": "#2ca02c", "R3": "#d62728"}
+RATER_OVERLAY = RATER_COLORS                     # contour color per rater in montages
 EXPERT_COLOR = "#ffb000"
 
 METRIC_LABEL = {"dice": "Dice", "jaccard": "Jaccard (IoU)",
@@ -63,6 +64,15 @@ def _color(rater):
     return RATER_COLORS.get(rater, "#555555")
 
 
+def _series_colors(keys, fixed):
+    """Fixed identity colors where defined, then tab20 colors not already
+    used, so every rater or pair in a figure stays distinguishable."""
+    used = {matplotlib.colors.to_hex(c) for c in fixed.values()}
+    spare = (c for c in plt.get_cmap("tab20").colors
+             if matplotlib.colors.to_hex(c) not in used)
+    return {k: fixed.get(k) or next(spare, "#555555") for k in keys}
+
+
 # ----------------------------- agreement plots ---------------------------
 def plot_per_scan(df, metric, out_path, title, higher_is_better=True,
                   group="rater", phase_breaks=None):
@@ -72,12 +82,13 @@ def plot_per_scan(df, metric, out_path, title, higher_is_better=True,
     subjects = sorted(df["subject"].unique())
     xpos = {s: i for i, s in enumerate(subjects)}
     fig, ax = plt.subplots(figsize=(max(6, 0.7 * len(subjects) + 3), 4.2))
-    cmap = RATER_COLORS if group == "rater" else PAIR_COLORS
+    cmap = _series_colors(sorted(df[group].unique()),
+                          RATER_COLORS if group == "rater" else PAIR_COLORS)
 
     for key, g in df.groupby(group):
         g = g.sort_values("subject")
         ax.plot([xpos[s] for s in g["subject"]], g[metric], marker="o", ms=6,
-                lw=1.4, color=cmap.get(key, "#555555"), label=str(key), alpha=0.9)
+                lw=1.4, color=cmap[key], label=str(key), alpha=0.9)
 
     mean = df.groupby("subject")[metric].mean().reindex(subjects)
     ax.plot(range(len(subjects)), mean.values, marker="D", ms=7, lw=2.6,

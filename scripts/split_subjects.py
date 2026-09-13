@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Assign subjects to phases and raters, with blinding, never moving an
-existing assignment.
+"""Assign subjects to phases and raters, with blinding, never moving existing
+work.
 
 Reads the pools (paths.yaml), raters (raters.json) and phase definitions +
 seed + ID naming (phases.yaml) from config/, then writes
@@ -9,11 +9,13 @@ workspace ID (e.g. sub-0001) so raters never see the source IDs; the
 workspace -> source key lives in the "mapping" field and must be kept private.
 
 The split is append-only. When subjects_split.json exists, every phase in it is
-kept exactly as is -- matched by phase name, so renumbering a phase in
-phases.yaml keeps its subjects and IDs -- and only phases new to phases.yaml are
-allocated, with IDs continuing after the highest existing one. --regenerate
-rebuilds everything from the seed instead, which can move subjects raters
-already have.
+kept as is (matched by phase name, so renumbering a phase in phases.yaml keeps
+its subjects and IDs) and only phases new to phases.yaml are allocated, with IDs
+continuing after the highest existing one. Raters can be added to raters.json
+(never removed): they get every shared phase's subjects, and a partitioned
+phase must then be re-divided with --repartition. The previous key is backed up
+next to it before every write. --regenerate rebuilds everything from the seed
+instead, which can move subjects raters already have.
 
 Nothing is hardcoded: raters come from raters.json, subjects from each pool's
 list, the seed/ID naming from phases.yaml. A phase takes its subjects one of
@@ -26,17 +28,24 @@ two ways:
               another workspace ID) and are numbered after every drawn phase,
               so adding such a phase never shifts a draw.
 
-For a partitioned phase, an `overlap` fraction of its subjects is given to every
-rater (hidden repeats) so reliability can be tracked on the production set.
+A partitioned phase gives an `overlap` fraction of its subjects to every rater
+(hidden repeats, for reliability): its `overlap_subjects` plus a random pick
+among subjects whose source image exists. The rest is divided at random, as
+evenly as possible, across raters. --repartition redoes this for existing
+phases with the same subjects and IDs; a subject a rater already has output
+files for (in the workspace) stays with that rater.
 
     python scripts/split_subjects.py --dry-run      # preview; writes nothing
     python scripts/split_subjects.py                # allocate new phases only
+    python scripts/split_subjects.py --repartition phase6 --workspace <ws>
     python scripts/split_subjects.py --regenerate   # rebuild all from the seed
 """
 import argparse
 import json
 import random
 import re
+import shutil
+import time
 from pathlib import Path
 
 import utils
@@ -51,12 +60,34 @@ def allocate(subjects, n):
     return subjects[:n], subjects[n:]
 
 
-def partition(subjects, raters):
-    """Divide subjects across raters as evenly as possible (round-robin)."""
-    by_rater = {r: [] for r in raters}
-    for i, sub in enumerate(subjects):
-        by_rater[raters[i % len(raters)]].append(sub)
-    return by_rater
+def partition(order, raters, n_overlap, required=(), eligible=None, locked=None):
+    """Divide a partitioned phase's workspace IDs, in random `order`, across raters.
+
+    The overlap, given to every rater, is `required` plus the first other IDs of
+    `order` that are `eligible` (all when None), up to n_overlap. Every other ID
+    goes to the rater with the fewest so far (ties by rater order, i.e.
+    round-robin), except IDs in `locked` ({ID: raters}), which go to exactly
+    those raters. Returns (by_rater, overlap), both sorted."""
+    locked = locked or {}
+    overlap = list(dict.fromkeys(required))
+    for wid in order:
+        if len(overlap) >= n_overlap:
+            break
+        if wid not in overlap and (eligible is None or wid in eligible):
+            overlap.append(wid)
+    by_rater = {r: list(overlap) for r in raters}
+    load = dict.fromkeys(raters, 0)
+    rest = [w for w in order if w not in overlap]
+    for wid in rest:
+        for r in locked.get(wid, ()):
+            by_rater[r].append(wid)
+            load[r] += 1
+    for wid in rest:
+        if wid not in locked:
+            r = min(raters, key=load.get)
+            by_rater[r].append(wid)
+            load[r] += 1
+    return {r: sorted(v) for r, v in by_rater.items()}, sorted(overlap)
 
 
 def load_pools(paths, config_dir):
@@ -65,20 +96,20 @@ def load_pools(paths, config_dir):
             for name, pdef in paths["pools"].items()}
 
 
-def phase_entry(pcfg, pool_name, ids, raters):
-    """Split entry for one phase from its workspace IDs (in draw order)."""
+def phase_entry(pcfg, pool_name, order, raters, mapping, eligible=None, locked=None):
+    """Split entry for one phase from its workspace IDs in random `order`."""
     entry = {"name": pcfg["name"], "pool": pool_name,
-             "assignment": pcfg["assignment"], "subjects": sorted(ids)}
+             "assignment": pcfg["assignment"], "subjects": sorted(order)}
     if pcfg["assignment"] == "partitioned":
-        frac = float(pcfg.get("overlap", 0) or 0)
-        n_overlap = round(frac * len(ids))
-        overlap, rest = ids[:n_overlap], ids[n_overlap:]
-        part = partition(rest, raters)
-        entry["by_rater"] = {r: sorted(part[r] + overlap) for r in raters}
+        by_source = {mapping[w]: w for w in order}
+        required = [by_source[s] for s in pcfg.get("overlap_subjects", [])]
+        n_overlap = max(round(float(pcfg.get("overlap", 0) or 0) * len(order)), len(required))
+        entry["by_rater"], overlap = partition(order, raters, n_overlap, required,
+                                               eligible, locked)
         if overlap:
-            entry["overlap"] = sorted(overlap)
+            entry["overlap"] = overlap
     else:                                           # shared: same subjects for all
-        entry["by_rater"] = {r: sorted(ids) for r in raters}
+        entry["by_rater"] = {r: sorted(order) for r in raters}
     return entry
 
 
@@ -107,6 +138,19 @@ def match_existing(old, phases, keys, error):
     return kept
 
 
+def output_locks(workspace, folders, raters, ids):
+    """{workspace ID: raters} for the IDs with any file under
+    <workspace>/<folder>/<rater>/outputs/<ID>/, in any of `folders`."""
+    locked = {}
+    for folder in folders:
+        for r in raters:
+            for wid in ids:
+                out = Path(workspace) / folder / r / "outputs" / wid
+                if out.is_dir() and any(p.is_file() for p in out.rglob("*")):
+                    locked.setdefault(wid, set()).add(r)
+    return locked
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -116,6 +160,10 @@ def main():
     ap.add_argument("--out", type=Path, default=None,
                     help="Output JSON (default: <config-dir>/subjects_split.json).")
     ap.add_argument("--dry-run", action="store_true", help="Print the split without writing it.")
+    ap.add_argument("--repartition", nargs="+", default=[], metavar="PHASE",
+                    help="Re-divide these existing partitioned phases across the current raters.")
+    ap.add_argument("--workspace", type=Path, default=None,
+                    help="Workspace checked for existing outputs (default: workspace_root).")
     ap.add_argument("--regenerate", action="store_true",
                     help="Ignore the existing split and rebuild every phase from the seed "
                          "(can move subjects raters already have).")
@@ -133,11 +181,13 @@ def main():
     old = None
     if split_path.exists() and not args.regenerate:
         old = utils.load_json(split_path)
-        if old["raters"] != raters or old["seed"] != seed:
-            ap.error(f"raters/seed differ from the existing split ({split_path}); "
-                     "restore them, or --regenerate to rebuild the whole split")
+        dropped = [r for r in old["raters"] if r not in raters]
+        if dropped or old["seed"] != seed:
+            ap.error(f"raters.json drops {dropped} or the seed differs from the existing "
+                     f"split ({split_path}); restore them, or --regenerate to rebuild it")
     elif split_path.exists():
         print(f"WARNING: --regenerate ignores {split_path}; subjects may move.")
+    added = [r for r in raters if old and r not in old["raters"]]
 
     pools = load_pools(paths, args.config_dir)
     seen = {}
@@ -147,10 +197,14 @@ def main():
                 ap.error(f"Subject {s} appears in both '{seen[s]}' and '{name}' pools")
             seen[s] = name
     for key in keys:
-        if phases[key]["pool"] not in pools:
-            ap.error(f"{key}: unknown pool '{phases[key]['pool']}' (not in paths.yaml pools)")
-        if "subjects" in phases[key] and "n_subjects" in phases[key]:
+        pcfg = phases[key]
+        if pcfg["pool"] not in pools:
+            ap.error(f"{key}: unknown pool '{pcfg['pool']}' (not in paths.yaml pools)")
+        if "subjects" in pcfg and "n_subjects" in pcfg:
             ap.error(f"{key}: set n_subjects or subjects, not both")
+        stray = [s for s in pcfg.get("overlap_subjects", []) if s not in pools[pcfg["pool"]]]
+        if stray:
+            ap.error(f"{key}: overlap_subjects {', '.join(stray)} not in pool '{pcfg['pool']}'")
 
     rng = random.Random(seed)
     remaining = {}
@@ -160,14 +214,53 @@ def main():
         remaining[name] = pool
 
     kept = match_existing(old, phases, keys, ap.error) if old else {}
+    for key in args.repartition:
+        if key not in kept or phases[key]["assignment"] != "partitioned":
+            ap.error(f"--repartition {key}: not a partitioned phase of the existing split")
     mapping = dict(old["mapping"]) if old else {}   # workspace ID -> source ID
-    entries = {key: old["phases"][old_key] for key, old_key in kept.items()}
-    for key in kept:                                # kept draws leave their pool
-        if "subjects" not in phases[key]:
-            taken = {mapping[w] for w in entries[key]["subjects"]}
+    entries = {}
+    for key, old_key in kept.items():
+        entry = old["phases"][old_key]
+        if added and entry["assignment"] == "shared":
+            entry = entry | {"by_rater": entry["by_rater"] |
+                             {r: list(entry["subjects"]) for r in added}}
+        elif added and key not in args.repartition:
+            ap.error(f"{key}_{entry['name']} is partitioned: adding raters needs "
+                     f"--repartition {key}")
+        entries[key] = entry
+        if "subjects" not in phases[key]:           # kept draws leave their pool
+            taken = {mapping[w] for w in entry["subjects"]}
             pool_name = phases[key]["pool"]
             remaining[pool_name] = [s for s in remaining[pool_name] if s not in taken]
     counter = 1 + max((int(re.search(r"(\d+)$", w).group(1)) for w in mapping), default=0)
+
+    def eligible(pool_name, ids):
+        """IDs whose source image exists (None when no image is found at all)."""
+        pdef = paths["pools"][pool_name]
+        have = {w for w in ids if utils.resolve(utils.source_paths(pdef, mapping[w])[0])}
+        if not have:
+            print(f"WARNING: no '{pool_name}' images found; overlap picks ignore availability.")
+        return have or None
+
+    locks = {}
+    workspace = Path(args.workspace or paths["workspace_root"])
+    for key in args.repartition:
+        pcfg, entry = phases[key], entries[key]
+        if not workspace.is_dir():
+            ap.error(f"--repartition checks the workspace for existing outputs, but "
+                     f"{workspace} does not exist; pass --workspace")
+        members = {mapping[w] for w in entry["subjects"]}
+        stray = [s for s in pcfg.get("overlap_subjects", []) if s not in members]
+        if stray:
+            ap.error(f"{key}: overlap_subjects {', '.join(stray)} are not in this phase")
+        folders = sorted({utils.phase_dirname(key, pcfg), utils.phase_dirname(kept[key], pcfg)})
+        locks[key] = output_locks(workspace, folders, old["raters"], entry["subjects"])
+        order = list(entry["subjects"])
+        random.Random(f"{seed}:{pcfg['name']}:repartition").shuffle(order)
+        entries[key] = phase_entry(pcfg, pcfg["pool"], order, raters, mapping,
+                                   eligible(pcfg["pool"], order), locks[key])
+        print(f"{key}: checked {', '.join(folders)} under {workspace}; "
+              f"{sum(map(len, locks[key].values()))} rater/subject pair(s) with outputs stay put")
 
     # New drawn phases are numbered before new listed ones (stable sort keeps
     # phase order), so a listed phase never shifts a draw.
@@ -185,48 +278,70 @@ def main():
             taken, remaining[pool_name] = allocate(remaining[pool_name], pcfg.get("n_subjects"))
         if not taken:
             ap.error(f"{key}: pool '{pool_name}' is exhausted; add more subjects.")
+        stray = [s for s in pcfg.get("overlap_subjects", []) if s not in taken]
+        if stray:
+            ap.error(f"{key}: overlap_subjects {', '.join(stray)} are not in this phase")
 
         # Relabel to anonymized workspace IDs (random source order -> blind).
         ids = [f"{prefix}{i:0{width}d}" for i in range(counter, counter + len(taken))]
         counter += len(taken)
         mapping.update(zip(ids, taken))
-        entries[key] = phase_entry(pcfg, pool_name, ids, raters)
+        partitioned = pcfg["assignment"] == "partitioned"
+        entries[key] = phase_entry(pcfg, pool_name, ids, raters, mapping,
+                                   eligible(pool_name, ids) if partitioned else None)
 
     split = {"seed": seed, "raters": raters, "mapping": mapping,
              "phases": {key: entries[key] for key in keys}}
 
     if old:                                         # guard: re-read the key from disk
         before = utils.load_json(split_path)
-        moved = [f"{k}_{before['phases'][ok]['name']}" for k, ok in kept.items()
-                 if split["phases"][k] != before["phases"][ok]]
-        moved += [w for w, s in before["mapping"].items() if mapping.get(w) != s]
+        moved = [w for w, s in before["mapping"].items() if mapping.get(w) != s]
+        for key, old_key in kept.items():
+            b, a = before["phases"][old_key], split["phases"][key]
+            if a["subjects"] != b["subjects"]:
+                moved.append(f"{key} subjects")
+            elif key in args.repartition:
+                moved += [f"{key} {r}/{w}" for w, rs in locks[key].items()
+                          for r in rs if w not in a["by_rater"][r]]
+            elif any(a["by_rater"].get(r) != v for r, v in b["by_rater"].items()):
+                moved.append(f"{key} assignments")
         if moved:
-            raise SystemExit(f"Refusing to write: existing assignments would change: {moved}")
+            raise SystemExit(f"Refusing to write: existing work would move: {moved}")
 
     print(f"Split (seed={seed}, raters={raters}):")
     for key, info in split["phases"].items():
         line = (f"  {key}_{info['name']:<16} pool={info['pool']:<7} "
                 f"{info['assignment']:<11} {len(info['subjects']):>3} subjects")
-        if "overlap" in info:
+        if info["assignment"] == "partitioned":
             sizes = "/".join(str(len(v)) for v in info["by_rater"].values())
-            line += f"  (+{len(info['overlap'])} overlap; per-rater {sizes})"
-        status = ("new" if key not in kept else
-                  "kept" if kept[key] == key else f"kept, was {kept[key]}")
+            line += f"  (+{len(info.get('overlap', []))} overlap; per-rater {sizes})"
+        if key not in kept:
+            status = "new"
+        else:
+            status = "repartitioned" if key in args.repartition else "kept"
+            if kept[key] != key:
+                status += f", was {kept[key]}"
+            if added and info["assignment"] == "shared":
+                status += f", +{len(added)} raters"
         print(f"{line}  [{status}]")
 
     out = args.out or split_path
     if args.dry_run:
         print("Dry run: nothing written.")
     elif old and split == old and out == split_path:
-        print(f"No new phases; {split_path} unchanged.")
+        print(f"No changes; {split_path} left as is.")
     else:
+        if out.exists():
+            backup = out.with_name(f"{out.stem}.{time.strftime('%Y%m%d-%H%M%S')}.json")
+            shutil.copy2(out, backup)
+            print(f"Backed up the previous {out.name} to {backup}")
         out.write_text(json.dumps(split, indent=2) + "\n")
         print(f"Wrote {out}")
     for key, old_key in kept.items():
         if key != old_key:
             name = split["phases"][key]["name"]
-            print(f"NOTE: {old_key}_{name} is now {key}_{name}: rename its workspace "
-                  "folder to match (subjects and IDs are unchanged).")
+            print(f"NOTE: {old_key}_{name} is now {key}_{name}; make_workspace.py builds "
+                  "the new folder and leaves any old one untouched.")
     return 0
 
 

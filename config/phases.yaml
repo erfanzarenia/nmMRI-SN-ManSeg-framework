@@ -12,7 +12,11 @@
 #
 # The split is append-only: once config/subjects_split.json exists, every phase
 # in it keeps its subjects and IDs (matched by name, so a renumbered phase keeps
-# them) and split_subjects.py allocates only phases that are new here.
+# them) and split_subjects.py allocates only phases that are new here. Raters
+# added to raters.json get every shared phase's subjects; a partitioned phase is
+# re-divided only with `split_subjects.py --repartition phaseN`, which keeps its
+# subjects and IDs and leaves each subject with any rater who already has output
+# files for it.
 #
 # Each phaseN block:
 #   name        slug for the workspace folder -> phaseN_<name>
@@ -24,6 +28,9 @@
 #               partitioned -> subjects divided across raters
 #   overlap     partitioned only: fraction [0..1] of the phase's subjects also
 #               given to EVERY rater (hidden repeats) for reliability monitoring
+#   overlap_subjects
+#               partitioned only: source IDs that must be in the overlap; the
+#               rest of it is picked at random among subjects with an image
 #   expert_mask place an expert_mask alongside each image (pool must define
 #               expert_mask_pattern)
 #   attempts    1 -> outputs/<sub>/<rater>_mask.nii.gz
@@ -78,8 +85,9 @@ phase5:
   name: snit_calibration
   pool: study
   # Fixed SNIT scans: sub-1093, sub-5064, two more adolescents (sub-5xxx) and
-  # one more adult (sub-1xxx); none is a production hidden repeat. All five keep
-  # their production assignment (phase6) too, under other workspace IDs.
+  # one more adult (sub-1xxx). All five keep their production assignment
+  # (phase6) too, under other workspace IDs; sub-1093 and sub-5064 are also
+  # production overlap subjects.
   subjects: [sub-1093, sub-5064, sub-5005, sub-5066, sub-1038]
   assignment: shared
   expert_mask: false
@@ -97,7 +105,8 @@ phase6:
   pool: study
   n_subjects: all
   assignment: partitioned
-  overlap: 0.15
+  overlap: 0.10
+  overlap_subjects: [sub-1093, sub-5064]
   expert_mask: false
   attempts: 1
   labels: [SN, CP]

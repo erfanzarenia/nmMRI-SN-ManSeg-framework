@@ -9,15 +9,22 @@ flat, with .nii or .nii.gz files; every input is normalized to a gzip-compressed
 ITK-SNAP, and the rater-facing docs are copied into <workspace_root>/docs/
 alongside the data.
 
-    python scripts/make_workspace.py                 # build everything
-    python scripts/make_workspace.py --phase phase4  # one phase
-    python scripts/make_workspace.py --dry-run       # preview the tree only
-    python scripts/make_workspace.py --link          # symlink when source is .nii.gz
-    python scripts/make_workspace.py --skip-docs     # do not copy the rater docs
+Existing work is never touched: an input already in place is kept (--overwrite
+replaces it), folders are only ever created, and --raters limits the build to
+some raters, e.g. when new raters join a workspace that is already in use.
+
+    python scripts/make_workspace.py                         # build everything
+    python scripts/make_workspace.py --phase phase5 phase6   # some phases
+    python scripts/make_workspace.py --raters R4 R5          # some raters
+    python scripts/make_workspace.py --workspace <path>      # not workspace_root
+    python scripts/make_workspace.py --dry-run               # preview only
+    python scripts/make_workspace.py --link                  # symlink .nii.gz sources
+    python scripts/make_workspace.py --skip-docs             # do not copy the rater docs
 """
 import argparse
 import gzip
 import shutil
+from collections import Counter
 from pathlib import Path
 
 import utils
@@ -49,20 +56,23 @@ def copy_docs(docs_dir, workspace, dry_run):
     return n
 
 
-def place(src, dst_dir, stem, link, dry_run, log):
+def place(src, dst_dir, stem, link, overwrite, dry_run, log):
     """Materialize one source volume into dst_dir as <stem>.nii.gz, always
     gzip-compressed regardless of whether the source is .nii or .nii.gz (and
     regardless of a misleading extension; compression is judged by content).
     With --link, symlink instead, but only when the source is already
-    gzip-compressed; otherwise it is converted."""
+    gzip-compressed; otherwise it is converted. A file already in place is kept
+    unless `overwrite`. Returns "placed", "kept" or "missing"."""
     dst = Path(dst_dir) / f"{stem}.nii.gz"
-    if dry_run:
-        log.append(f"    {'link/convert' if link else 'convert'}  {src}  ->  {dst}")
-        return True
+    if (dst.exists() or dst.is_symlink()) and not overwrite:
+        return "kept"
     resolved = utils.resolve(src)
     if resolved is None:
         log.append(f"    MISSING source: {src}")
-        return False
+        return "missing"
+    if dry_run:
+        log.append(f"    {'link/convert' if link else 'convert'}  {resolved}  ->  {dst}")
+        return "placed"
     with open(resolved, "rb") as f:
         is_gz = f.read(2) == b"\x1f\x8b"
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +85,7 @@ def place(src, dst_dir, stem, link, dry_run, log):
     else:                                               # .nii content -> compress
         with open(resolved, "rb") as fi, gzip.open(dst, "wb") as fo:
             shutil.copyfileobj(fi, fo)
-    return True
+    return "placed"
 
 
 def main():
@@ -84,7 +94,14 @@ def main():
     ap.add_argument("--config-dir", type=Path, default=utils.CONFIG_DIR)
     ap.add_argument("--split", type=Path, default=None,
                     help="subjects_split.json (default: <config-dir>/subjects_split.json).")
-    ap.add_argument("--phase", default=None, help="Build only this phase, e.g. phase4.")
+    ap.add_argument("--workspace", type=Path, default=None,
+                    help="Override workspace_root from paths.yaml.")
+    ap.add_argument("--phase", nargs="+", default=None,
+                    help="Build only these phases, e.g. phase5 phase6.")
+    ap.add_argument("--raters", nargs="+", default=None,
+                    help="Build only these raters' folders (default: every rater in the split).")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Replace inputs that are already in place (default: keep them).")
     ap.add_argument("--link", action="store_true",
                     help="Symlink inputs when the source is already .nii.gz; otherwise convert.")
     ap.add_argument("--dry-run", action="store_true", help="Print actions without writing.")
@@ -97,10 +114,14 @@ def main():
     paths, phases, _ = utils.load_config(args.config_dir)
     split = utils.load_json(args.split or args.config_dir / "subjects_split.json")
     mapping = split["mapping"]                       # workspace ID -> source ID
-    workspace = Path(paths["workspace_root"])
-    keys = [args.phase] if args.phase else list(split["phases"])
+    workspace = Path(args.workspace or paths["workspace_root"])
+    keys = args.phase or list(split["phases"])
+    unknown = ([k for k in keys if k not in split["phases"]] +
+               [r for r in args.raters or [] if r not in split["raters"]])
+    if unknown:
+        ap.error(f"not in the split: {', '.join(unknown)}")
 
-    placed = missing = 0
+    counts = Counter()
     for key in keys:
         pcfg = phases[key]
         info = split["phases"][key]
@@ -113,24 +134,27 @@ def main():
         print(f"   pool={pool}{run}, {info['assignment']}, inputs: {inputs}, "
               f"attempts: {pcfg['attempts']}, labels: {'+'.join(utils.phase_labels(pcfg))}")
         for rater, subs in info["by_rater"].items():
+            if args.raters and rater not in args.raters:
+                continue
             for sub in subs:                         # sub is an anonymized workspace ID
                 log = []
                 image_src, expert_src = utils.source_paths(pdef, mapping[sub])
                 in_dir = utils.input_dir(phase_dir, rater, sub)
-                ok = place(image_src, in_dir, "image", args.link, args.dry_run, log)
+                counts[place(image_src, in_dir, "image", args.link, args.overwrite,
+                             args.dry_run, log)] += 1
                 if pcfg["expert_mask"]:
                     if expert_src is None:
                         log.append(f"    expert_mask requested but pool '{pool}' "
                                    "defines no expert_mask_pattern")
                     else:
-                        place(expert_src, in_dir, "expert_mask", args.link, args.dry_run, log)
+                        place(expert_src, in_dir, "expert_mask", args.link, args.overwrite,
+                              args.dry_run, log)
                 out_dir = utils.output_dir(phase_dir, rater, sub)
-                if args.dry_run:
-                    log.append(f"    mkdir {out_dir}")
-                else:
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                placed += ok
-                missing += (not ok)
+                if not out_dir.is_dir():
+                    if args.dry_run:
+                        log.append(f"    mkdir {out_dir}")
+                    else:
+                        out_dir.mkdir(parents=True, exist_ok=True)
                 if log:
                     print(f"  [{rater}] {sub}")
                     print("\n".join(log))
@@ -141,8 +165,8 @@ def main():
         print(f"   {'would copy' if args.dry_run else 'copied'} {n} rater doc(s).")
 
     verb = "would place" if args.dry_run else "placed"
-    print(f"\nDone. {verb} {placed} subject image(s)" +
-          (f"; {missing} missing source(s)." if missing else "."))
+    print(f"\nDone. {verb} {counts['placed']} subject image(s); kept {counts['kept']} "
+          f"already in place; {counts['missing']} missing source(s).")
     return 0
 
 

@@ -119,8 +119,11 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
     n_sub = rve["subject"].nunique() if rve is not None and not rve.empty else (
         rvr["subject"].nunique() if rvr is not None and not rvr.empty else 0)
 
+    inv = tables.get("inventory")
+    raters = (", ".join(dict.fromkeys(inv["rater"]))
+              if inv is not None and not inv.empty else "n/a")
     A(f"# QC Report: {tag}\n")
-    A(f"Subjects: **{n_sub}** · Raters: **R1, R2, R3** · "
+    A(f"Subjects: **{n_sub}** · Raters: **{raters}** · "
       "Comparison: rater-vs-expert and rater-vs-rater.\n")
     A(METHODS)
 

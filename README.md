@@ -69,9 +69,18 @@ segmented, and [docs/qc.md](docs/qc.md) for QC details.
 - The split is append-only: once `config/subjects_split.json` exists,
   re-running `split_subjects.py` allocates only phases new to phases.yaml and
   never moves an existing subject or ID (`--regenerate` rebuilds everything
-  from the seed). Draws are reproducible from the `seed`; still, keep a private
-  backup of the key.
+  from the seed). The previous key is backed up next to it before every write.
+- Raters R1, R2 and R3 started first; R4, R5, R6 and R7 joined later and start
+  at Phase 1. Raters added to raters.json get every shared phase; production is
+  re-divided with `split_subjects.py --repartition phase6 --workspace <ws>`,
+  which keeps a subject with any rater who already has output files for it.
+- Production (Phase 6) gives about 10% of its subjects to every rater (the
+  overlap, always including sub-1093 and sub-5064) and divides the rest at
+  random across raters.
 - The five SNIT calibration scans are a fixed list in phases.yaml. They also
   keep their production assignment, under other workspace IDs.
+- `make_workspace.py` never overwrites an input already in place (`--overwrite`
+  forces it) and never removes folders; `--workspace`, `--phase` and `--raters`
+  limit where and what it builds.
 
 Contact: Erfan Zarenia (ezarenia@uwo.ca).

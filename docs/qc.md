@@ -161,8 +161,9 @@ python scripts/qc_protocol.py --phase phase5 --latest
 ```
 
 Calibration scans also keep their production assignment, under other workspace
-IDs (the split never moves existing assignments); the production masks are the
-ones used for analysis.
+IDs; sub-1093 and sub-5064 are production overlap subjects as well, so every
+rater segments them again in Phase 6. The production masks are the ones used for
+analysis.
 
 ## Which phase to QC
 
@@ -177,6 +178,7 @@ ones used for analysis.
   the section 4 verdict gates production. `qc_metrics.py --phase phase5` adds
   pairwise SN detail when a verdict needs it.
 - **Phase 6 (Production)**: partitioned, so pairwise Dice is computed only on
-  the hidden overlap subset, giving an ongoing reliability check on the
-  production data. `volumes.csv` covers the rest as a distribution sanity check,
-  and section 4 checks the CP rules on every mask.
+  the hidden overlap (about 10% of subjects, given to every rater), giving an
+  ongoing reliability check on the production data. `volumes.csv` covers the
+  rest as a distribution sanity check, and section 4 checks the CP rules on
+  every mask.
