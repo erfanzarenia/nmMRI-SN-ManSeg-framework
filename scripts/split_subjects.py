@@ -13,9 +13,10 @@ kept as is (matched by phase name, so renumbering a phase in phases.yaml keeps
 its subjects and IDs) and only phases new to phases.yaml are allocated, with IDs
 continuing after the highest existing one. Raters can be added to raters.json
 (never removed): they get every shared phase's subjects, and a partitioned
-phase must then be re-divided with --repartition. The previous key is backed up
-next to it before every write. --regenerate rebuilds everything from the seed
-instead, which can move subjects raters already have.
+phase must then be re-divided with --repartition, or left for a later division
+with --defer. The previous key is backed up next to it before every write.
+--regenerate rebuilds everything from the seed instead, which can move subjects
+raters already have.
 
 Nothing is hardcoded: raters come from raters.json, subjects from each pool's
 list, the seed/ID naming from phases.yaml. A phase takes its subjects one of
@@ -38,6 +39,7 @@ files for (in the workspace) stays with that rater.
     python scripts/split_subjects.py --dry-run      # preview; writes nothing
     python scripts/split_subjects.py                # allocate new phases only
     python scripts/split_subjects.py --repartition phase6 --workspace <ws>
+    python scripts/split_subjects.py --defer phase6  # add raters, divide later
     python scripts/split_subjects.py --regenerate   # rebuild all from the seed
 """
 import argparse
@@ -162,6 +164,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Print the split without writing it.")
     ap.add_argument("--repartition", nargs="+", default=[], metavar="PHASE",
                     help="Re-divide these existing partitioned phases across the current raters.")
+    ap.add_argument("--defer", nargs="+", default=[], metavar="PHASE",
+                    help="Leave these partitioned phases untouched while raters are added; "
+                         "the new raters get subjects there at a later --repartition.")
     ap.add_argument("--workspace", type=Path, default=None,
                     help="Workspace checked for existing outputs (default: workspace_root).")
     ap.add_argument("--regenerate", action="store_true",
@@ -214,9 +219,13 @@ def main():
         remaining[name] = pool
 
     kept = match_existing(old, phases, keys, ap.error) if old else {}
-    for key in args.repartition:
-        if key not in kept or phases[key]["assignment"] != "partitioned":
-            ap.error(f"--repartition {key}: not a partitioned phase of the existing split")
+    for flag, names in (("--repartition", args.repartition), ("--defer", args.defer)):
+        for key in names:
+            if key not in kept or phases[key]["assignment"] != "partitioned":
+                ap.error(f"{flag} {key}: not a partitioned phase of the existing split")
+    both = sorted(set(args.repartition) & set(args.defer))
+    if both:
+        ap.error(f"{', '.join(both)}: cannot be both --repartition and --defer")
     mapping = dict(old["mapping"]) if old else {}   # workspace ID -> source ID
     entries = {}
     for key, old_key in kept.items():
@@ -224,9 +233,9 @@ def main():
         if added and entry["assignment"] == "shared":
             entry = entry | {"by_rater": entry["by_rater"] |
                              {r: list(entry["subjects"]) for r in added}}
-        elif added and key not in args.repartition:
+        elif added and key not in args.repartition and key not in args.defer:
             ap.error(f"{key}_{entry['name']} is partitioned: adding raters needs "
-                     f"--repartition {key}")
+                     f"--repartition {key}, or --defer {key} to divide it later")
         entries[key] = entry
         if "subjects" not in phases[key]:           # kept draws leave their pool
             taken = {mapping[w] for w in entry["subjects"]}
@@ -323,6 +332,8 @@ def main():
                 status += f", was {kept[key]}"
             if added and info["assignment"] == "shared":
                 status += f", +{len(added)} raters"
+            elif added and key in args.defer:
+                status += f", deferred for {', '.join(added)}"
         print(f"{line}  [{status}]")
 
     out = args.out or split_path

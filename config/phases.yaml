@@ -16,7 +16,7 @@
 # added to raters.json get every shared phase's subjects; a partitioned phase is
 # re-divided only with `split_subjects.py --repartition phaseN`, which keeps its
 # subjects and IDs and leaves each subject with any rater who already has output
-# files for it.
+# files for it. `--defer phaseN` adds the raters now and divides that phase later.
 #
 # Each phaseN block:
 #   name        slug for the workspace folder -> phaseN_<name>
