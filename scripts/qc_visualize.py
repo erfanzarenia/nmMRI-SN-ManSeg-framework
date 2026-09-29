@@ -17,9 +17,7 @@ qc_analysis.py (and reloading the masks/images for the slice views):
 Importable; run_qc.py calls generate_phase_figures() / worst_slices_for_phase().
 Standalone it renders both for one phase:
 
-    python scripts/qc_visualize.py --phase phase1 \
-        --workspace ~/path/to/ManSeg_Workspace \
-        --qc-root   ~/path/to/ManSeg_Workspace/qc
+    python scripts/qc_visualize.py --phase phase1
 """
 from __future__ import annotations
 
@@ -39,7 +37,8 @@ import qc_analysis as qa
 
 # Consistent identity colors across every figure.
 RATER_COLORS = {"R1": "#1f77b4", "R2": "#2ca02c", "R3": "#d62728",
-                "R4": "#17becf", "R5": "#9467bd", "R6": "#8c564b", "R7": "#e377c2"}
+                "R4": "#17becf", "R5": "#9467bd", "R6": "#8c564b", "R7": "#e377c2",
+                "R8": "#bcbd22"}
 PAIR_COLORS = {"R1-R2": "#9467bd", "R1-R3": "#8c564b", "R3-R2": "#e377c2",
                "R2-R3": "#e377c2"}
 MEAN_COLOR = "#111111"
@@ -349,6 +348,8 @@ def _iter_scan_rater(phase_key, workspace, phases, raters, rve_df, label, attemp
         if expert is None or image is None:
             continue
         for r in raters:
+            if (sub, r) not in lut:                     # no usable mask for this attempt
+                continue
             res = qa.resolve_rater_mask(phase_dir, r, sub, label, attempt)
             if res is None:
                 continue

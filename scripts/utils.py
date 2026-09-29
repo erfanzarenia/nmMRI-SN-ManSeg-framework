@@ -88,14 +88,6 @@ def output_dir(phase_dir, rater, subject):
     return Path(phase_dir) / rater / "outputs" / subject
 
 
-def rater_mask_pattern(phase_dir, rater, subject, pcfg):
-    """Expected rater output mask; a glob when the phase has multiple attempts."""
-    out = output_dir(phase_dir, rater, subject)
-    if int(pcfg.get("attempts", 1)) > 1:
-        return out / f"{rater}_mask_a*.nii.gz"   # latest attempt wins
-    return out / f"{rater}_mask.nii.gz"
-
-
 def find_subjects(phase_dir, raters):
     """All sub-* directories present under any rater's inputs/ folder."""
     found = set()

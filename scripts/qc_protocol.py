@@ -18,9 +18,10 @@ attempt this writes, under <qc-root>/<phase>/<a<N>|latest>/protocol/:
                             (SNIT calibration): pass/review per rater and the
                             scans behind each missed criterion
 
-    python scripts/qc_protocol.py --phase phase5 \
-        --workspace ~/path/to/ManSeg_Workspace \
-        --qc-root   ~/path/to/ManSeg_Workspace/qc
+run_qc.py runs these checks for every attempt of a phase that segments CP;
+standalone, e.g. for the calibration re-check on re-segmentations:
+
+    python scripts/qc_protocol.py --phase phase5
     python scripts/qc_protocol.py --phase phase5 --latest   # include _a2 re-segmentations
 """
 from __future__ import annotations
@@ -151,7 +152,7 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
         image = affine = zooms = None
         masks, rows = {}, {}
         for r in assigned:
-            found = qa.find_rater_attempts(utils.output_dir(phase_dir, r, sub), r)["attempts"]
+            found = qa.rater_attempts(phase_dir, r, sub)["attempts"]
             if attempt == "latest":
                 path = found[max(found)] if found else None
             else:
@@ -191,8 +192,9 @@ def verdict(tables, criteria, raters):
         agree = pd.DataFrame(columns=["rater", "subject", "sn_dice", "sn_hd95",
                                       "sn_volume_ratio", "cp_mean_dev"], dtype=float)
     n_scans = prot["subject"].nunique()
+    present = set(prot.loc[prot["mask"] != "(missing)", "rater"])
     rows = []
-    for r in raters:
+    for r in (r for r in raters if r in present):     # raters who have started
         p, a = prot[prot["rater"] == r], agree[agree["rater"] == r]
         flagged = set(p.loc[p["flags"].fillna("") != "", "subject"])
         low = set(a.loc[(a["sn_dice"] < criteria["sn_dice_min"]) |
@@ -217,6 +219,21 @@ def verdict(tables, criteria, raters):
                      "verdict": "pass" if all(ok for ok, _ in checks.values()) else "review",
                      "review_scans": " ".join(sorted(review))})
     return pd.DataFrame(rows)
+
+
+def run_protocol(phase_key, workspace, phases, raters, attempt, out_dir):
+    """compute_protocol plus, for a phase with `criteria`, the per-rater verdict,
+    all written to <out_dir>/protocol/. Returns (tables, verdict or None)."""
+    tables = compute_protocol(phase_key, workspace, phases, raters, attempt, out_dir)
+    criteria = phases[phase_key].get("criteria")
+    if not criteria or tables["protocol_per_mask"].empty:
+        return tables, None
+    v = verdict(tables, criteria, raters)
+    pdir = Path(out_dir) / "protocol"
+    v.to_csv(pdir / "verdict.csv", index=False)
+    tag = "latest" if attempt == "latest" else f"a{attempt}"
+    (pdir / "verdict.md").write_text(verdict_markdown(v, criteria, f"{phase_key} ({tag})"))
+    return tables, v
 
 
 def verdict_markdown(v, criteria, title):
@@ -264,8 +281,8 @@ def main():
     workspace = args.workspace or Path(paths["workspace_root"])
     folder = "latest" if args.latest else qa.attempt_dirname(args.attempt)
     out_dir = Path(args.qc_root or paths["qc_output_root"]) / args.phase / folder
-    tables = compute_protocol(args.phase, workspace, phases, raters,
-                              "latest" if args.latest else args.attempt, out_dir)
+    tables, v = run_protocol(args.phase, workspace, phases, raters,
+                             "latest" if args.latest else args.attempt, out_dir)
     prot, agree = tables["protocol_per_mask"], tables["agreement_per_scan"]
     if prot.empty:
         print(f"{args.phase}: no subjects found in {workspace}")
@@ -280,11 +297,7 @@ def main():
         cols = ["sn_dice", "sn_hd95", "cp_dice", "sn_volume_ratio", "cp_mean_dev", "contrast_diff"]
         print("\n-- per rater, median across scans (vs the other raters) --")
         print(agree.groupby("rater")[cols].median().to_string())
-    if criteria:
-        v = verdict(tables, criteria, raters)
-        pdir = out_dir / "protocol"
-        v.to_csv(pdir / "verdict.csv", index=False)
-        (pdir / "verdict.md").write_text(verdict_markdown(v, criteria, f"{args.phase} ({folder})"))
+    if v is not None:
         print("\n-- verdict --")
         print(v[["rater", "protocol", "sn_agreement", "sn_volume", "cp_reference",
                  "verdict", "review_scans"]].to_string(index=False))

@@ -88,26 +88,97 @@ def compute_findings(tag, tables):
                          .agg(mean="mean", sd="std", n="count").reset_index()
                          .rename(columns={"source": "rater"}).sort_values("mean"))
 
-    if inv is not None and not inv.empty:
-        f["anomalies"] = inv[inv["flags"].fillna("") != ""]
+    if inv is not None and not inv.empty:            # notes on the masks actually used
+        f["anomalies"] = inv[(inv["flags"].fillna("") != "") & (inv["used"] != "(absent)")]
     return f
 
 
-METHODS = (
-    "**Methods.** Dice and Jaccard (overlap) and three surface distances in physical "
-    "mm, namely max Hausdorff (HD), 95th-percentile Hausdorff (HD95, robust to "
-    "single-voxel outliers) and average symmetric surface distance (ASSD), were "
-    "computed on the SN label (value 1) at the native voxel spacing "
-    "(0.4×0.4×1.0 mm). Each segmentation attempt (`a1`, `a2`, …) is analyzed "
-    "independently; the **attempts-average** is the mean of the per-attempt "
-    "metrics for each scan/rater (`n_attempts` = how many were averaged), "
-    "mirroring every other table. Only rater/scans that actually have an attempt "
-    "contribute, so the counts adapt to the data. HD95 is the recommended "
-    "distance metric for ranking.\n")
+def methods(label=1):
+    """Methods note that opens every report."""
+    target = "the SN label (value 1)" if label == 1 else f"label value {label}"
+    return (
+        "**Methods.** Dice and Jaccard (overlap) and three surface distances in "
+        "physical mm, namely max Hausdorff (HD), 95th-percentile Hausdorff (HD95, "
+        "robust to single-voxel outliers) and average symmetric surface distance "
+        f"(ASSD), were computed on {target} at each scan's native voxel spacing. "
+        "Each segmentation attempt (`a1`, `a2`, …) is analyzed independently; the "
+        "**attempts-average** is the mean of the per-attempt metrics for each "
+        "scan/rater (`n_attempts` = how many were averaged), mirroring every other "
+        "table. Only rater/scans that actually have an attempt contribute, so the "
+        "counts adapt to the data. HD95 is the recommended distance metric for "
+        "ranking.\n")
+
+
+ROOT_ROW = "(outputs root)"
+
+
+def coverage_report(phase_key, cov, expected, path):
+    """Write <phase>/coverage.md: which attempts each rater has for each scan,
+    then the notes behind every '*'. Returns one summary line per rater."""
+    scans = cov[cov["subject"] != ROOT_ROW]
+    raters = list(dict.fromkeys(cov["rater"]))
+    found = {(r.rater, r.subject): r.found for r in scans.itertuples()}
+    noted = {(r.rater, r.subject) for r in scans.itertuples() if r.flags}
+    summary = []
+    for r in raters:
+        g = scans[scans["rater"] == r]
+        if g.empty:
+            continue
+        have = [set(f.split(",")) - {"-"} for f in g["found"]]
+        if not any(have):
+            summary.append(f"{r}: no masks yet")
+            continue
+        parts = []
+        for a in expected:
+            miss = [s for s, h in zip(g["subject"], have) if a not in h]
+            parts.append(f"{a} {len(g) - len(miss)}/{len(g)}" +
+                         (f" (no {a}: {', '.join(miss)})" if 0 < len(miss) <= 3 else ""))
+        extra = sorted(set().union(*have) - set(expected))
+        if extra:
+            parts.append("also " + ", ".join(extra))
+        summary.append(f"{r}: " + ", ".join(parts))
+
+    L = [f"# Coverage: {phase_key}", "",
+         f"Attempts found per rater and scan (expected: {', '.join(expected)}). "
+         "`·` means no usable mask and `*` marks a scan with a note below. The QC "
+         "metrics use whatever masks exist, so gaps only reduce what is compared.", "",
+         "| scan | " + " | ".join(raters) + " |", "|---|" + "---|" * len(raters)]
+    for s in sorted(scans["subject"].unique()):
+        cells = []
+        for r in raters:
+            f = found.get((r, s))
+            cell = "" if f is None else "·" if f == "-" else f.replace(",", " ")
+            cells.append(cell + ("*" if (r, s) in noted else ""))
+        L.append(f"| {s} | " + " | ".join(cells) + " |")
+    L += ["", "## Per rater", ""] + [f"- {x}" for x in summary]
+    notes = cov[cov["flags"] != ""]
+    if not notes.empty:
+        L += ["", "## Notes", ""] + [f"- {r.rater} / {r.subject}: {r.flags}"
+                                     for r in notes.itertuples()]
+    Path(path).write_text("\n".join(L) + "\n")
+    return summary
+
+
+def attempt_note(cov, attempt):
+    """One line for a report: which raters lack `attempt` (None: any expected
+    attempt, for the attempts-average) on some of their scans."""
+    scans = cov[cov["subject"] != ROOT_ROW]
+    gaps = []
+    for r, g in scans.groupby("rater", sort=False):
+        n = (sum(attempt not in f.split(",") for f in g["found"]) if attempt
+             else sum(bool(m) for m in g["missing"]))
+        if n:
+            gaps.append(f"{r} {n}/{len(g)}")
+    what = f"an {attempt} mask" if attempt else "every expected attempt"
+    if not gaps:
+        return f"Coverage: every rater has {what} for every scan."
+    return (f"Coverage: scans without {what}, per rater: {', '.join(gaps)}. They simply "
+            "do not contribute here; see [coverage.md](../../coverage.md).")
 
 
 def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
-                 has_slices=True, plots_rel="../plots", slices_rel="../worst_slices"):
+                 has_slices=True, plots_rel="../plots", slices_rel="../worst_slices",
+                 label=1, coverage_note=None):
     f = compute_findings(tag, tables)
     rdir = Path(base_dir) / "reports"
     rdir.mkdir(parents=True, exist_ok=True)
@@ -120,12 +191,12 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
         rvr["subject"].nunique() if rvr is not None and not rvr.empty else 0)
 
     inv = tables.get("inventory")
-    raters = (", ".join(dict.fromkeys(inv["rater"]))
-              if inv is not None and not inv.empty else "n/a")
+    used = inv[inv["used"] != "(absent)"] if inv is not None and not inv.empty else None
+    raters = ", ".join(dict.fromkeys(used["rater"])) if used is not None and len(used) else "none"
     A(f"# QC Report: {tag}\n")
-    A(f"Subjects: **{n_sub}** · Raters: **{raters}** · "
+    A(f"Subjects: **{n_sub}** · Raters with masks: **{raters}** · "
       "Comparison: rater-vs-expert and rater-vs-rater.\n")
-    A(METHODS)
+    A(methods(label))
 
     # headline
     A("## Headline\n")
@@ -148,12 +219,14 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
 
     # data quality
     A("## Data inventory & anomalies\n")
+    if coverage_note:
+        A(coverage_note + "\n")
     if "anomalies" in f and not f["anomalies"].empty:
-        A("Flags raised while locating masks (handled, not dropped silently):\n")
+        A("Notes on the masks used here (all handled; the full list is in coverage.md):\n")
         A(df_to_md(f["anomalies"][["subject", "rater", "available",
                                    "used", "flags"]]))
     else:
-        A("No anomalies: every rater/subject had a standard mask for this attempt.\n")
+        A("No notes on the masks used here.\n")
 
     # rater vs expert
     if rve is not None and not rve.empty:
@@ -251,14 +324,15 @@ def _bullets(f):
     return b
 
 
-def overall_report(phase_findings, overall_tables, qc_root):
-    """Cross-phase summary from the per-phase findings + combined tables."""
+def overall_report(phase_findings, overall_tables, qc_root, links=None, label=1):
+    """Cross-phase summary from the per-phase findings + combined tables.
+    `links` maps each phase to its report, relative to summary/."""
     rdir = Path(qc_root) / "summary"
     rdir.mkdir(parents=True, exist_ok=True)
     L = []
     A = L.append
-    A("# QC Report: Overall (Phase 1 + Phase 2)\n")
-    A(METHODS)
+    A(f"# QC Report: Overall ({', '.join(phase_findings)})\n")
+    A(methods(label))
 
     rve = overall_tables.get("rater_vs_expert_per_scan")
     rvr = overall_tables.get("rater_vs_rater_per_scan")
@@ -276,7 +350,7 @@ def overall_report(phase_findings, overall_tables, qc_root):
     A(df_to_md(_round(pd.DataFrame(rows))))
 
     if rve is not None and not rve.empty:
-        A("\n## Pooled rater vs expert (both phases)\n")
+        A("\n## Pooled rater vs expert\n")
         A("### Grand average\n")
         A(df_to_md(_round(qa.summarize(rve, None, qa.SD_METRICS))))
         A("\n### Per rater (pooled, worst first)\n")
@@ -287,7 +361,7 @@ def overall_report(phase_findings, overall_tables, qc_root):
         A(f"![Overall Dice by rater](plots/dice_by_rater_overall.png)\n")
 
     if rvr is not None and not rvr.empty:
-        A("\n## Pooled inter-rater (both phases)\n")
+        A("\n## Pooled inter-rater\n")
         A(df_to_md(_round(qa.summarize(rvr, ["pair"], qa.SD_METRICS)[
             ["pair", "n", "dice_mean", "dice_sd", "hd95_mean", "assd_mean"]])))
         A(f"\n![Overall inter-rater Dice by pair](plots/dice_by_pair_overall.png)\n")
@@ -302,9 +376,11 @@ def overall_report(phase_findings, overall_tables, qc_root):
           f"(Dice {pr.iloc[0]['dice_mean']:.3f}).")
         # phase1 -> phase2 trend (phase1 has few subjects, so this is indicative
         # only; deltas under 0.02 are reported as "stable").
-        A("- _Phase-1 has only ~2 scans/rater, so phase1→phase2 trends are "
-          "indicative, not powered:_")
-        for r in sorted(rve["rater"].unique()):
+        trend = {"phase1", "phase2"} <= set(rve["phase"])
+        if trend:
+            A("- _Phase-1 has only ~2 scans/rater, so phase1→phase2 trends are "
+              "indicative, not powered:_")
+        for r in sorted(rve["rater"].unique()) if trend else []:
             d1 = rve[(rve.rater == r) & (rve.phase == "phase1")]["dice"].mean()
             d2 = rve[(rve.rater == r) & (rve.phase == "phase2")]["dice"].mean()
             if not np.isnan(d1) and not np.isnan(d2):
@@ -317,7 +393,7 @@ def overall_report(phase_findings, overall_tables, qc_root):
       "(see per-phase inventories).")
     A("\n## Per-phase reports\n")
     for tag in phase_findings:
-        A(f"- [{tag}](../{tag}/reports/{tag}_qc_report.md)")
+        A(f"- [{tag}]({(links or {}).get(tag, f'../{tag}/')})")
 
     path = rdir / "overall_qc_report.md"
     path.write_text("\n".join(L))

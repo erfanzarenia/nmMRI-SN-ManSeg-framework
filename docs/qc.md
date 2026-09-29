@@ -1,126 +1,106 @@
 # QC & Inter-Rater Analysis
 
-Scripts are run centrally (not by raters), per phase, and read paths from
-[`config/paths.yaml`](../config/paths.yaml). Masks hold SN = 1 and, from Phase
-3, CP = 2, the cerebral-peduncle reference region
-([segmentation_protocol.md](segmentation_protocol.md)). Sections 1–3 measure one
-label at a time, SN by default (`--label`); section 4 checks the CP rules and
-reference intensity. Results are shared back with raters only when appropriate.
+QC runs centrally (not by raters) with one command. Masks hold SN = 1 and, from
+Phase 3, CP = 2, the cerebral-peduncle reference region
+([segmentation_protocol.md](segmentation_protocol.md)). Results are shared back
+with raters only when appropriate.
 
-## 1. Metrics
+## Run
 
 ```bash
-python scripts/qc_metrics.py --phase phase4
+python scripts/run_qc.py phase2            # one phase
+python scripts/run_qc.py phase1 phase2     # several phases, plus a pooled summary
+python scripts/run_qc.py                   # every phase that has rater outputs
 ```
 
-Loads each rater's mask (and the expert mask, in the expert-guided phases),
-matching them by the anonymized workspace ID, and writes to
-`<qc_output_root>/<phase>/`:
-
-| File                       | Contents                                          |
-|----------------------------|---------------------------------------------------|
-| `dice_pairwise.csv`        | rater-vs-rater Dice per subject (inter-rater)     |
-| `dice_rater_vs_expert.csv` | rater-vs-expert Dice per subject (phases 1–2)     |
-| `volumes.csv`              | SN volume (mm³) per source per subject            |
-
-Rater masks follow the convention in [`scripts/utils.py`](../scripts/utils.py):
-`<rater>_mask.nii.gz`, or the latest `<rater>_mask_a*.nii.gz` for multi-attempt
-phases. Useful flags: `--subjects sub-0010 sub-0012`, `--label 1`,
-`--workspace <path>`, `--out-dir <path>`.
-
-## 2. Summaries
-
-```bash
-python scripts/interrater_analysis.py --phase phase4
-```
-
-Reads the metrics CSVs and writes clean summaries to the same directory, and
-prints them:
-
-| File                     | Contents                                       |
-|--------------------------|------------------------------------------------|
-| `summary_overall.csv`    | mean/sd Dice for the phase                      |
-| `summary_by_pair.csv`    | mean/sd pairwise Dice per rater pair            |
-| `summary_by_subject.csv` | mean pairwise Dice per subject (worst first)    |
-| `summary_by_rater.csv`   | mean Dice vs expert per rater (phases 1–2)      |
-
-The worst-subject ordering (`--top-n`) flags cases to review first.
-
-## 3. Comprehensive QC (metrics + figures + reports)
-
-For a full QC pass, use the `run_qc.py` driver: it adds **Hausdorff** distances
-(max, HD95, ASSD) alongside Dice, the complete reporting hierarchy, publication
-figures, worst-slice montages and Markdown reports. It reuses the same
-`utils.py` and reads the same workspace; expert-guided phases (1–2) also get
-rater-vs-expert outputs.
-
-```bash
-python scripts/run_qc.py \
-    --workspace ~/path/to/ManSeg_Workspace \
-    --qc-root   ~/path/to/ManSeg_Workspace/qc \
-    --phases phase1 phase2
-```
-
-**Attempts.** Some phases collect more than one attempt per scan
-(`<INIT>_mask_a1`, `_a2`, …). `run_qc.py` detects the attempts present in each
-phase from the file names (it does not trust the configured count) and runs the
-**whole analysis independently for each attempt**, plus an **attempts-average**
-that is the **mean of the per-attempt metrics** for each scan/rater. Nothing
-assumes a fixed number of attempts: each scan is averaged over only the attempts
-it has (`n_attempts` records how many), and a single-attempt phase gets just
-`a1/`. Each phase's QC directory is therefore:
+Paths come from [`config/paths.yaml`](../config/paths.yaml); `--workspace` and
+`--qc-root` override them, and `--label 2` measures CP instead of SN. Every run
+starts clean: whatever the QC folder held is first moved to
+`qc/archive/<timestamp>/`, never deleted, so `qc/` always holds exactly one run.
 
 ```
-qc/<phase>/
-  a1/  { metrics, plots, worst_slices, all_slices, reports }
-  a2/  { … }                       # only if a2 exists (adapts to the data)
-  attempts_average/ { metrics, plots, reports } + metrics/attempts_reproducibility.csv
-  legacy_scripts/                  # original qc_metrics.py / interrater_analysis.py
-qc/summary/                        # pooled across phases (attempts-average where available)
+qc/
+  README.md                    # what this run covers and where to start
+  <phase>/
+    coverage.md, coverage.csv  # who has which attempt for which scan, plus notes
+    a1/  { metrics, plots, worst_slices, all_slices, reports[, protocol] }
+    a2/  { … }                 # one folder per attempt found
+    attempts_average/ { metrics, plots, reports } + metrics/attempts_reproducibility.csv
+  summary/                     # pooled across phases, only when 2+ phases are run
+  archive/<timestamp>/         # earlier runs
 ```
 
-Each per-attempt folder mirrors the same outputs (the average folder has the
-metric tables and agreement figures but no slice montages, since there is no
-single mask to draw):
+Start with `<phase>/coverage.md`, then the reports in
+`<phase>/<attempt>/reports/`; each opens with a Methods note.
+
+## Attempts
+
+Attempts (`a1`, `a2`, …) are detected from the file names, not from the
+configured count, and each is analyzed on its own. A rater or scan without an
+attempt simply does not contribute to it, so a phase can be QC'd while some
+raters are still on a1 and others have finished a2, and a later round (a new
+a2, or an a3) is picked up the next time QC runs. With more than one attempt,
+`attempts_average/` holds the mean of the per-attempt metrics for each
+scan/rater (`n_attempts` records how many were averaged; it is not a combined
+mask), and `attempts_reproducibility.csv` each rater's agreement between their
+own attempts (a_i vs a_j).
+
+## Coverage and flags
+
+QC never stops for missing or odd files: it computes what it can and notes the
+rest. `coverage.md` shows, per rater and scan, the attempts found (`·` for none,
+`*` for a scan with a note), a per-rater count against the attempts the phase
+expects, and the notes themselves. The same per-rater counts are printed while
+QC runs, and each report repeats the gaps for its attempt in one line.
+
+How masks are found in `outputs/<sub>/`:
+
+- **Standard:** `<INIT>_mask_a<N>.nii.gz`, and `<INIT>_mask.nii.gz` as a1 in
+  single-attempt phases.
+- **Used, with a note:** other names whose meaning is clear: the attempt token
+  in any case (`_A1`), `ai` as the a1 typo, and a lone mask with no attempt
+  token (read as a1).
+- **Ignored, with a note:** copies of the inputs (`image.nii.gz`), extra files
+  next to a recognized mask, and files saved outside the subject folders.
+- **Set aside, with a note:** a mask that is not on the scan's image grid (the
+  note names the scan whose grid it matches, which usually means it was saved
+  into the wrong subject folder), and a mask with no voxels of the measured
+  label.
+
+## Metrics and figures
+
+Dice and Jaccard, plus Hausdorff distances (max, HD95, ASSD) in mm, rater vs
+expert (phases with expert masks) and rater vs rater:
 
 | Area            | Script            | Output                                                        |
 |-----------------|-------------------|---------------------------------------------------------------|
-| Metrics         | `qc_analysis.py`  | per-scan + per-rater + per-pair + per-scan + grand-average CSVs, volumes, and an **inventory** flagging missing/odd mask files |
+| Metrics         | `qc_analysis.py`  | per-scan + per-rater + per-pair + per-scan + grand-average CSVs, volumes, and an **inventory** of the mask used per rater/scan with its notes |
 | Figures         | `qc_visualize.py` | Dice & Hausdorff per-scan (each rater + mean), by-rater / by-pair bars |
 | Worst/best slices | `qc_visualize.py` | the 3 worst (top row) and 3 best (bottom row) axial slices per rater-scan by per-slice Dice vs expert, rater + expert contours on the NM image (`worst_slices/`) |
 | All slices      | `qc_visualize.py` | every SN-bearing axial slice per rater-scan in one figure, rater + expert contours overlaid once per panel (`all_slices/`) |
 | Reproducibility | `qc_analysis.py`  | intra-rater agreement between a rater's own attempts (`attempts_average/metrics/attempts_reproducibility.csv`) |
-| Reports         | `qc_report.py`    | `<phase>/<attempt>/reports/<phase>_<attempt>_qc_report.md` and `summary/overall_qc_report.md` |
+| Reports         | `qc_report.py`    | `<phase>/<attempt>/reports/<phase>_<attempt>_qc_report.md`, and `summary/overall_qc_report.md` when several phases are run |
 
-The attempts-average is the per-scan/rater **mean of the per-attempt metrics**
-(Dice, Hausdorff, volumes, …), mirroring every other table; it is not a
-combined mask. Companion `attempts_reproducibility.csv` records each rater's own
-attempt-to-attempt agreement (a_i vs a_j). The original `qc_metrics.py`
-(latest-attempt Dice only) still runs into each phase's `legacy_scripts/` as a
-cross-check. Each report opens with a Methods note; start at
-`summary/overall_qc_report.md`.
-
-## 4. Protocol & reference region (CP)
+## Protocol & reference region (CP)
 
 CP is a reference region: what matters is that it follows the rules in
 [segmentation_protocol.md](segmentation_protocol.md) and gives a stable
-reference intensity, more than its overlap between raters.
+reference intensity, more than its overlap between raters. For phases that
+segment CP, `run_qc.py` runs these checks for every attempt into
+`<phase>/a<N>/protocol/`; on its own:
 
 ```bash
-python scripts/qc_protocol.py --phase phase4 \
-    --workspace ~/path/to/ManSeg_Workspace \
-    --qc-root   ~/path/to/ManSeg_Workspace/qc
+python scripts/qc_protocol.py --phase phase4
 ```
 
-Writes to `<qc-root>/<phase>/a<N>/protocol/` (attempt 1 unless `--attempt N`;
-`--latest` takes each rater's highest attempt per scan and writes to
-`<phase>/latest/protocol/`):
+(attempt 1 unless `--attempt N`; `--latest` takes each rater's highest attempt
+per scan and writes to `<phase>/latest/protocol/`):
 
 | File                     | Contents |
 |--------------------------|----------|
 | `protocol_per_mask.csv`  | per rater × scan: labels present, SN/CP volume, hemispheres covered, CP slice coverage vs SN, CP voxels touching SN, mean SN and CP intensity, contrast `(SN − CP) / CP`, and rule flags |
 | `agreement_per_scan.csv` | per rater × scan with ≥ 2 raters: mean SN Dice, SN HD95 and CP Dice vs the other raters; SN volume ÷ scan median (`sn_volume_ratio`); CP mean intensity vs scan median (`cp_mean_dev`); contrast minus scan median (`contrast_diff`) |
-| `verdict.csv`, `verdict.md` | only for a phase with `criteria` (Phase 5): pass/review per rater, see below |
+| `verdict.csv`, `verdict.md` | only for a phase with `criteria` (Phase 5): pass/review per rater who has started, see below |
 
 **CP criteria.** Every mask is expected to raise no flags:
 
@@ -137,9 +117,9 @@ boundary to reproduce.
 
 ### Calibration verdict (Phase 5)
 
-The SNIT calibration has a `criteria` block in `phases.yaml`, so its run also
-writes `verdict.csv` and `verdict.md`: one line per rater, `pass` only when all
-four criteria hold.
+The SNIT calibration has a `criteria` block in `phases.yaml`, so its checks also
+write `verdict.csv` and `verdict.md`: one line per rater with masks, `pass` only
+when all four criteria hold.
 
 | Criterion      | Rule (value in `phases.yaml`) |
 |----------------|-------------------------------|
@@ -165,20 +145,30 @@ IDs; sub-1093 and sub-5064 are production overlap subjects as well, so every
 rater segments them again in Phase 6. The production masks are the ones used for
 analysis.
 
+## Quick checks
+
+For a fast Dice-only look at one phase (latest attempt per rater, found the same
+way as above), without figures or reports:
+
+```bash
+python scripts/qc_metrics.py --phase phase4           # dice_pairwise, dice_rater_vs_expert, volumes
+python scripts/interrater_analysis.py --phase phase4  # summary_*.csv, worst subjects first
+```
+
+Both write to `<qc_output_root>/<phase>/`, i.e. into the current run's folder.
+
 ## Which phase to QC
 
 - **Phase 2 (Practice)**: rater-vs-expert calibration (shared, has expert
   masks).
 - **Phase 3 (Mock exam)**: pairwise inter-rater on the blind rehearsal set; a
   sanity check before the real Exam. It is the first phase with CP, so the
-  section 4 flags are fed back before the Exam.
+  protocol flags are fed back before the Exam.
 - **Phase 4 (Exam)**: inter-rater reliability (shared, blind). The primary QC
-  target, for SN (sections 1–3) and CP (section 4).
+  target, for SN (metrics) and CP (protocol checks).
 - **Phase 5 (SNIT calibration)**: shared, blind, on SNIT combined-echo images;
-  the section 4 verdict gates production. `qc_metrics.py --phase phase5` adds
-  pairwise SN detail when a verdict needs it.
+  the calibration verdict gates production.
 - **Phase 6 (Production)**: partitioned, so pairwise Dice is computed only on
   the hidden overlap (about 10% of subjects, given to every rater), giving an
-  ongoing reliability check on the production data. `volumes.csv` covers the
-  rest as a distribution sanity check, and section 4 checks the CP rules on
-  every mask.
+  ongoing reliability check on the production data. Volumes cover the rest as a
+  distribution sanity check, and the protocol checks cover every mask.

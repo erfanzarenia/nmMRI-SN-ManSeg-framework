@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 import utils
+import qc_analysis as qa
 
 
 def main():
@@ -53,10 +54,10 @@ def main():
     for sub in subjects:
         binaries, zooms = {}, None
         for r in raters:
-            mp = utils.resolve(utils.rater_mask_pattern(phase_dir, r, sub, pcfg))
-            if mp is None:
+            found = qa.rater_attempts(phase_dir, r, sub)["attempts"]
+            if not found:
                 continue
-            data, _, zooms = utils.load_mask(mp)
+            data, _, zooms = utils.load_mask(found[max(found)])   # latest attempt
             binaries[r] = (data == args.label)
 
         expert = None

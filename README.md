@@ -31,10 +31,8 @@ python scripts/split_subjects.py                  # write it (append-only; seed 
 python scripts/make_workspace.py --dry-run        # preview the tree
 python scripts/make_workspace.py                  # build it (copies inputs)
 
-# Raters segment in ITK-SNAP, then:
-python scripts/qc_metrics.py --phase phase4
-python scripts/interrater_analysis.py --phase phase4
-python scripts/qc_protocol.py --phase phase4      # CP rules + reference intensity
+# Raters segment in ITK-SNAP, then run QC (metrics, figures, reports, coverage):
+python scripts/run_qc.py phase4
 ```
 
 ## Phases

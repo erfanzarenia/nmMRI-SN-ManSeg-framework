@@ -98,10 +98,8 @@ python scripts/make_workspace.py
 
 # 4. Raters segment in ITK-SNAP (see itksnap_instructions.md).
 
-# 5. QC + inter-rater analysis, run centrally (exam shown).
-python scripts/qc_metrics.py --phase phase4
-python scripts/interrater_analysis.py --phase phase4
-python scripts/qc_protocol.py --phase phase4
+# 5. QC, run centrally (exam shown).
+python scripts/run_qc.py phase4
 ```
 
 ## Rules

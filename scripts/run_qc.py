@@ -1,67 +1,71 @@
 #!/usr/bin/env python3
-"""One-shot QC driver: metrics -> figures -> worst/best + all slices -> reports,
-for each phase, each segmentation attempt, and the attempts-average, then pooled
-across phases.
+"""QC in one command: metrics, figures, worst/best and all-slice montages and
+reports for each segmentation attempt and the attempts-average, plus the CP
+protocol checks in phases that segment CP.
 
-    python scripts/run_qc.py \
-        --workspace ~/path/to/ManSeg_Workspace \
-        --qc-root   ~/path/to/ManSeg_Workspace/qc \
-        --phases phase1 phase2
+    python scripts/run_qc.py phase2            # one phase
+    python scripts/run_qc.py phase1 phase2     # several, plus a pooled summary
+    python scripts/run_qc.py                   # every phase with rater outputs
 
-Attempts (a1, a2, ...) are detected per phase from the file names. Each attempt
-is analyzed independently into <qc-root>/<phase>/a<N>/{metrics,plots,
-worst_slices,all_slices,reports}; when a phase has more than one attempt an
-<phase>/attempts_average/ holds the **mean of the per-attempt metrics** (mirrors
-the metric tables + agreement figures; no slice montages, since there is no
-single mask) and carries the attempts_reproducibility table. The original
-qc_metrics.py + interrater_analysis.py run into <phase>/legacy_scripts/ as an
-independent cross-check. Phases are then pooled (attempts-average where
-available) into <qc-root>/summary/. Only expert-guided phases get rater-vs-expert
-outputs.
+Paths come from config/paths.yaml (--workspace and --qc-root override them).
+Each run starts clean: earlier results in the QC folder are first moved to
+<qc-root>/archive/<timestamp>/, never deleted.
+
+Attempts (a1, a2, ...) are detected per phase from the file names and each is
+analyzed on its own in <phase>/a<N>/; with more than one attempt,
+<phase>/attempts_average/ holds the mean of the per-attempt metrics and each
+rater's attempt-to-attempt reproducibility. <phase>/coverage.md shows who has
+which attempt for which scan and notes gaps, odd file names and set-aside masks;
+the metrics use whatever masks exist. With two or more phases, a pooled summary
+goes to <qc-root>/summary/.
 """
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
+import os
+import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
 
 import utils
 import qc_analysis as qa
-import qc_visualize as qv
+import qc_protocol as qp
 import qc_report as qr
-
-HERE = Path(__file__).resolve().parent
-
-
-def run_legacy(phase, workspace, qc_root):
-    """Run the original scripts into <phase>/legacy_scripts/ for cross-check."""
-    out = Path(qc_root) / phase / "legacy_scripts"
-    out.mkdir(parents=True, exist_ok=True)
-    try:
-        subprocess.run([sys.executable, str(HERE / "qc_metrics.py"),
-                        "--phase", phase, "--workspace", str(workspace),
-                        "--out-dir", str(out)], check=True, cwd=HERE,
-                       capture_output=True, text=True)
-        subprocess.run([sys.executable, str(HERE / "interrater_analysis.py"),
-                        "--phase", phase, "--qc-dir", str(out)], check=True,
-                       cwd=HERE, capture_output=True, text=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"  legacy scripts failed for {phase}: {e.stderr.strip()[:200]}")
-        return False
+import qc_visualize as qv
 
 
-def process_attempt(ph, n, workspace, phases, raters, qc_root, label):
+def has_outputs(phase_dir, raters):
+    """True when any rater has a NIfTI file anywhere under outputs/ in a phase."""
+    for r in raters:
+        out = Path(phase_dir) / r / "outputs"
+        if out.is_dir() and any(p.is_file() for p in out.rglob("*.nii*")):
+            return True
+    return False
+
+
+def archive_previous(qc_root):
+    """Move everything in qc_root except archive/ into archive/<timestamp>/.
+    Returns that folder, or None when there was nothing to move."""
+    qc_root = Path(qc_root)
+    old = sorted(p for p in qc_root.iterdir() if p.name != "archive") if qc_root.is_dir() else []
+    if not old:
+        return None
+    dest = qc_root / "archive" / time.strftime("%Y%m%d-%H%M%S")
+    dest.mkdir(parents=True)
+    for p in old:
+        shutil.move(str(p), str(dest / p.name))
+    return dest
+
+
+def process_attempt(ph, n, workspace, phases, raters, qc_root, label, note):
     """Full analysis for one integer attempt (metrics -> agreement figures ->
-    worst/best + all-slice montages -> report) into <qc_root>/<ph>/a<N>.
-    Returns (tables, findings, n_figs, n_slices)."""
+    worst/best + all-slice montages -> CP protocol checks -> report) into
+    <qc_root>/<ph>/a<N>. Returns (tables, findings, report_path, n_figs, n_slices)."""
     folder, fig_tag = f"a{n}", f"{ph}_a{n}"
     base = qc_root / ph / folder
-    tables = qa.compute_phase(ph, workspace, phases, raters, n,
-                              label=label, out_dir=base)
+    tables = qa.compute_phase(ph, workspace, phases, raters, n, label=label, out_dir=base)
     figs = qv.generate_agreement_figures(tables, base / "plots", fig_tag)
     rve = tables.get("rater_vs_expert_per_scan")
     n_slices = 0
@@ -71,14 +75,17 @@ def process_attempt(ph, n, workspace, phases, raters, qc_root, label):
         made = qv.all_slices_for_phase(ph, workspace, None, phases, raters, rve,
                                        base / "all_slices", label=label, attempt=n)
         n_slices = len(made)
-    _, findings = qr.phase_report(f"{ph} · a{n}", tables, base, fig_tag)
-    return tables, findings, len(figs), n_slices
+    if "CP" in utils.phase_labels(phases[ph]):
+        qp.run_protocol(ph, workspace, phases, raters, n, base)
+    path, findings = qr.phase_report(f"{ph} · a{n}", tables, base, fig_tag,
+                                     label=label, coverage_note=note)
+    return tables, findings, path, len(figs), n_slices
 
 
-def process_average(ph, per_tables, repro, qc_root):
+def process_average(ph, per_tables, repro, qc_root, label, note):
     """Mean-of-metrics average across attempts: metrics + agreement figures +
-    report (no slice montages -- there is no single mask). The reproducibility
-    table lives here. Returns (tables, findings, n_figs)."""
+    report (no slice montages, since there is no single mask). The
+    reproducibility table lives here. Returns (tables, findings, report_path, n_figs)."""
     folder, fig_tag = qa.AVERAGE_DIR, f"{ph}_{qa.AVERAGE_DIR}"
     base = qc_root / ph / folder
     avg = qa.average_attempt_metrics(per_tables, ph)
@@ -89,80 +96,29 @@ def process_average(ph, per_tables, repro, qc_root):
     if repro is not None and not repro.empty:
         repro.to_csv(base / "metrics" / "attempts_reproducibility.csv", index=False)
     figs = qv.generate_agreement_figures(avg, base / "plots", fig_tag)
-    _, findings = qr.phase_report(f"{ph} · attempts-average", avg, base, fig_tag,
-                                  reproducibility=repro, has_slices=False)
-    return avg, findings, len(figs)
+    path, findings = qr.phase_report(f"{ph} · attempts-average", avg, base, fig_tag,
+                                     reproducibility=repro, has_slices=False,
+                                     label=label, coverage_note=note)
+    return avg, findings, path, len(figs)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config-dir", type=Path, default=utils.CONFIG_DIR)
-    ap.add_argument("--workspace", type=Path, default=None)
-    ap.add_argument("--qc-root", type=Path, default=None)
-    ap.add_argument("--phases", nargs="+", default=["phase1", "phase2"])
-    ap.add_argument("--label", type=int, default=1)
-    ap.add_argument("--skip-legacy", action="store_true")
-    args = ap.parse_args()
-
-    paths, phases, raters = utils.load_config(args.config_dir)
-    workspace = args.workspace or Path(paths["workspace_root"])
-    qc_root = Path(args.qc_root or paths["qc_output_root"])
-    qc_root.mkdir(parents=True, exist_ok=True)
-
-    rep_tables, rep_findings, phase_folders = {}, {}, {}
-    for ph in args.phases:
-        print(f"\n========== {ph} ==========")
-        phase_dir = workspace / utils.phase_dirname(ph, phases[ph])
-        attempts = qa.detect_attempts(phase_dir, raters)
-        print(f"  detected attempts {attempts}")
-        per, a_findings, folders = [], {}, []
-        for n in attempts:
-            tables, findings, nf, ns = process_attempt(
-                ph, n, workspace, phases, raters, qc_root, args.label)
-            per.append(tables)
-            a_findings[f"a{n}"] = findings
-            folders.append(f"a{n}")
-            print(f"  [a{n}] {len(tables['rater_vs_expert_per_scan'])} rve rows, "
-                  f"{nf} figures, {ns} slice montages")
-
-        if len(attempts) > 1:
-            repro = qa.compute_attempt_reproducibility(ph, workspace, phases,
-                                                       raters, args.label)
-            avg, avg_findings, nf = process_average(ph, per, repro, qc_root)
-            folders.append(qa.AVERAGE_DIR)
-            rep_tables[ph], rep_findings[ph] = avg, avg_findings
-            print(f"  [{qa.AVERAGE_DIR}] mean-of-metrics, {nf} figures (no montages)")
-        else:                                     # single attempt: it is the rep
-            rep_tables[ph], rep_findings[ph] = per[0], a_findings[folders[0]]
-        phase_folders[ph] = folders
-
-        if not args.skip_legacy:
-            ok = run_legacy(ph, workspace, qc_root)
-            print(f"  legacy cross-check: {'ok' if ok else 'skipped/failed'}")
-
-    # ---- pooled overall (attempts-average per phase where available) ----
-    print("\n========== overall (pooled, attempts-average where available) ==========")
+def write_summary(pooled, rep_tables, rep_findings, rep_reports, qc_root, label):
+    """Pool the phases (attempts-average where available) into <qc_root>/summary/."""
     def pool(name):
-        frames = [rep_tables[p][name] for p in args.phases
+        frames = [rep_tables[p][name] for p in pooled
                   if name in rep_tables[p] and not rep_tables[p][name].empty]
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    overall = {n: pool(n) for n in ["rater_vs_expert_per_scan",
-                                    "rater_vs_rater_per_scan", "volumes",
-                                    "inventory"]}
-    # phase separators for the pooled per-scan plots
-    breaks = []
-    for name in ("rater_vs_expert_per_scan",):
-        df = overall[name]
-        if not df.empty:
-            subs = sorted(df["subject"].unique())
-            prev = None
-            for i, s in enumerate(subs):
-                ph = df[df.subject == s]["phase"].iloc[0]
-                if prev is not None and ph != prev:
-                    breaks.append((i, ph))
-                prev = ph
+    overall = {n: pool(n) for n in ["rater_vs_expert_per_scan", "rater_vs_rater_per_scan",
+                                    "volumes", "inventory"]}
+    breaks, rve = [], overall["rater_vs_expert_per_scan"]   # phase separators for plots
+    if not rve.empty:
+        prev = None
+        for i, s in enumerate(sorted(rve["subject"].unique())):
+            ph = rve[rve.subject == s]["phase"].iloc[0]
+            if prev is not None and ph != prev:
+                breaks.append((i, ph))
+            prev = ph
     overall["_phase_breaks"] = breaks
 
     sdir = qc_root / "summary"
@@ -170,64 +126,129 @@ def main():
     for n, df in overall.items():
         if isinstance(df, pd.DataFrame) and not df.empty:
             df.to_csv(sdir / "metrics" / f"{n}.csv", index=False)
-    # pooled aggregates
-    if not overall["rater_vs_expert_per_scan"].empty:
-        rve = overall["rater_vs_expert_per_scan"]
+    if not rve.empty:
         qa.summarize(rve, ["rater"], qa.SD_METRICS).to_csv(
             sdir / "metrics" / "rve_by_rater_overall.csv", index=False)
         qa.summarize(rve, ["phase", "rater"], qa.SD_METRICS).to_csv(
             sdir / "metrics" / "rve_by_phase_rater.csv", index=False)
         qa.summarize(rve, None, qa.SD_METRICS).to_csv(
             sdir / "metrics" / "rve_grand_average.csv", index=False)
-    if not overall["rater_vs_rater_per_scan"].empty:
-        rvr = overall["rater_vs_rater_per_scan"]
+    rvr = overall["rater_vs_rater_per_scan"]
+    if not rvr.empty:
         qa.summarize(rvr, ["pair"], qa.SD_METRICS).to_csv(
             sdir / "metrics" / "rvr_by_pair_overall.csv", index=False)
         qa.summarize(rvr, None, qa.SD_METRICS).to_csv(
             sdir / "metrics" / "rvr_grand_average.csv", index=False)
 
     figs = qv.generate_agreement_figures(overall, sdir / "plots", "overall")
-    print(f"  overall plots: {len(figs)}")
-    opath = qr.overall_report(rep_findings, overall, qc_root)
-    print(f"  overall report: {opath}")
+    links = {p: os.path.relpath(rep_reports[p], sdir) for p in pooled}
+    opath = qr.overall_report(rep_findings, overall, qc_root, links, label=label)
+    print(f"  pooled summary: {len(figs)} figures, report {opath}")
 
-    _write_readme(qc_root, phase_folders)
-    print(f"\nDone. QC tree under {qc_root}")
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("phases", nargs="*", metavar="PHASE",
+                    help="Phases to QC, e.g. phase2 (default: every phase with rater outputs).")
+    ap.add_argument("--workspace", type=Path, default=None,
+                    help="Override workspace_root from paths.yaml.")
+    ap.add_argument("--qc-root", type=Path, default=None,
+                    help="Override qc_output_root (default with --workspace: <workspace>/qc).")
+    ap.add_argument("--label", type=int, default=1, help="Label value to measure (SN = 1).")
+    ap.add_argument("--config-dir", type=Path, default=utils.CONFIG_DIR)
+    args = ap.parse_args()
+
+    paths, phases, raters = utils.load_config(args.config_dir)
+    workspace = Path(args.workspace or paths["workspace_root"])
+    qc_root = Path(args.qc_root or (workspace / "qc" if args.workspace
+                                     else paths["qc_output_root"]))
+    if not workspace.is_dir():
+        ap.error(f"workspace not found: {workspace}")
+    unknown = [k for k in args.phases if k not in phases]
+    if unknown:
+        ap.error(f"unknown phase(s): {', '.join(unknown)}")
+    todo = args.phases or [k for k in utils.phase_keys(phases)
+                           if has_outputs(workspace / utils.phase_dirname(k, phases[k]), raters)]
+    if not todo:
+        print(f"No rater outputs under {workspace}; nothing to QC.")
+        return 1
+    split_path = Path(args.config_dir) / "subjects_split.json"
+    split = utils.load_json(split_path) if split_path.exists() else None
+
+    archived = archive_previous(qc_root)
+    if archived:
+        print(f"Previous QC results moved to {archived}")
+
+    rep_tables, rep_findings, rep_reports, phase_folders = {}, {}, {}, {}
+    for ph in todo:
+        pcfg = phases[ph]
+        phase_dir = workspace / utils.phase_dirname(ph, pcfg)
+        print(f"\n========== {ph} ==========")
+        cov = qa.coverage(ph, workspace, phases, raters, split)
+        (qc_root / ph).mkdir(parents=True, exist_ok=True)
+        cov.to_csv(qc_root / ph / "coverage.csv", index=False)
+        print(f"  coverage (details in {qc_root / ph / 'coverage.md'}):")
+        for line in qr.coverage_report(ph, cov, qa.expected_attempts(pcfg),
+                                       qc_root / ph / "coverage.md"):
+            print(f"    {line}")
+        attempts = qa.detect_attempts(phase_dir, raters)
+        per, folders = [], []
+        for n in attempts:
+            tables, findings, path, nf, ns = process_attempt(
+                ph, n, workspace, phases, raters, qc_root, args.label,
+                qr.attempt_note(cov, f"a{n}"))
+            per.append(tables)
+            folders.append(f"a{n}")
+            rep_tables[ph], rep_findings[ph], rep_reports[ph] = tables, findings, path
+            print(f"  [a{n}] {len(tables['rater_vs_expert_per_scan'])} rater-vs-expert, "
+                  f"{len(tables['rater_vs_rater_per_scan'])} rater-vs-rater rows; "
+                  f"{nf} figures, {ns} slice montages")
+        if len(attempts) > 1:
+            repro = qa.compute_attempt_reproducibility(ph, workspace, phases, raters, args.label)
+            avg, findings, path, nf = process_average(
+                ph, per, repro, qc_root, args.label,
+                qr.attempt_note(cov, None))
+            folders.append(qa.AVERAGE_DIR)
+            rep_tables[ph], rep_findings[ph], rep_reports[ph] = avg, findings, path
+            print(f"  [{qa.AVERAGE_DIR}] mean of {len(attempts)} attempts, {nf} figures, "
+                  f"{len(repro)} attempt-to-attempt comparisons")
+        phase_folders[ph] = folders
+
+    pooled = [ph for ph in todo if ph in rep_tables]
+    if len(pooled) > 1:
+        write_summary(pooled, rep_tables, rep_findings, rep_reports, qc_root, args.label)
+    _write_readme(qc_root, phase_folders, pooled if len(pooled) > 1 else [], archived)
+    print(f"\nDone. QC results in {qc_root}")
     return 0
 
 
-def _write_readme(qc_root, phase_folders):
-    """phase_folders: {phase: [attempt-folder names]} so the tree reflects the
-    attempts actually found (e.g. a1 only, or a1/a2/attempts_average)."""
+def _write_readme(qc_root, phase_folders, pooled, archived):
+    """qc/README.md: what this run covers and where to start reading."""
     lines = [
         "# QC outputs", "",
-        "Generated by `scripts/run_qc.py` (metrics: `qc_analysis.py`, figures: "
-        "`qc_visualize.py`, reports: `qc_report.py`). Each phase is analyzed "
-        "separately **per segmentation attempt** (`a1`, `a2`, …) detected from "
-        "the file names, plus an `attempts_average/` that is the **mean of the "
-        "per-attempt metrics** for each scan/rater. Attempt folders are only "
-        "created for attempts that exist, so the tree adapts to the data.", "",
+        f"Generated by `scripts/run_qc.py` on {time.strftime('%Y-%m-%d %H:%M')} for "
+        f"{', '.join(phase_folders)}. Earlier runs are in `archive/`"
+        + (f" (the one just before this is `archive/{archived.name}/`)." if archived else "."), "",
+        "Start with each phase's `coverage.md` (who has which attempt, plus notes on "
+        "gaps, file names and set-aside masks), then the reports in "
+        "`<phase>/<attempt>/reports/`. Each attempt (`a1`, `a2`, ...) is analyzed on "
+        "its own; `attempts_average/` is the mean of the per-attempt metrics for each "
+        "scan/rater and holds the attempt-to-attempt reproducibility table.", "",
         "```", "qc/",
     ]
     full = "{metrics, plots, worst_slices, all_slices, reports}"
-    for ph in phase_folders:
-        lines.append(f"├── {ph}/")
-        for folder in phase_folders[ph]:
+    for ph, folders in phase_folders.items():
+        lines += [f"├── {ph}/", "│   ├── coverage.md, coverage.csv"]
+        for folder in folders:
             if folder == qa.AVERAGE_DIR:
-                lines.append(f"│   ├── {folder}/  {{metrics, plots, reports}} + "
-                             "attempts_reproducibility.csv  (mean of per-attempt "
-                             "metrics; no montages, since there is no single mask)")
+                lines.append(f"│   ├── {folder}/  {{metrics, plots, reports}} "
+                             "(mean of per-attempt metrics; no montages)")
             else:
-                lines.append(f"│   ├── {folder}/  {full}  (attempt {folder[1:]})")
-        lines.append("│   └── legacy_scripts/  original qc_metrics.py / interrater_analysis.py cross-check")
-    lines += ["└── summary/  (pooled across phases, attempts-average where available)",
-              "    ├── metrics/   pooled CSVs + grand averages",
-              "    ├── plots/     pooled (overall) figures",
-              "    └── overall_qc_report.md", "```", "",
-        "Each attempt folder mirrors the same analysis. **Start with** "
-        "`summary/overall_qc_report.md`, then per-phase per-attempt reports "
-        "(`<phase>/<attempt>/reports/`). Metric definitions and the "
-        "attempts-average rule are in each report's Methods note.", ""]
+                lines.append(f"│   ├── {folder}/  {full}")
+    if pooled:
+        lines.append("├── summary/  pooled across " + ", ".join(pooled))
+    lines += ["└── archive/  earlier runs", "```", ""]
     (Path(qc_root) / "README.md").write_text("\n".join(lines))
 
 
