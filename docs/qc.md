@@ -70,7 +70,10 @@ How masks are found in `outputs/<sub>/`:
 ## Metrics and figures
 
 Dice and Jaccard, plus Hausdorff distances (max, HD95, ASSD) in mm, rater vs
-expert (phases with expert masks) and rater vs rater:
+expert (phases with expert masks) and rater vs rater. Surface distances are
+measured between the voxel faces on each mask's boundary, weighted by face
+area, not between voxel centres, so they are not pinned to the 1 mm slice
+thickness and can fall below 1 mm.
 
 | Area            | Script            | Output                                                        |
 |-----------------|-------------------|---------------------------------------------------------------|

@@ -215,59 +215,83 @@ def jaccard(a, b):
 # (zooms) so anisotropic scans (e.g. 0.4x0.4x1.0 mm) give mm distances, not
 # voxel counts. scipy is imported lazily to keep the lighter scripts dependency
 # free, matching the numpy/nibabel pattern above.
-def surface_mask(mask):
-    """Boundary voxels of a binary mask: foreground voxels touching background
-    (6-connectivity). Empty in -> empty out."""
+#
+# A mask's surface is the set of voxel faces between foreground and background,
+# each taken at its centre and weighted by its area. Measuring between voxel
+# centres instead puts every surface point half a voxel inside the mask and
+# counts a 0.16 mm2 through-plane face like a 0.4 mm2 in-plane one, so on 1 mm
+# slices a one-slice difference at either end of the SN pins HD95 at the slice
+# thickness.
+def _surface_faces(mask, spacing):
+    """Boundary faces of a binary mask on the half-voxel lattice (voxel i sits
+    at 2i+1, the face between voxels i and i+1 at 2i+2): (face points, area in
+    mm2 at each point). The mask must not touch its own edge."""
     import numpy as np
-    from scipy import ndimage
-    mask = np.asarray(mask, bool)
-    if not mask.any():
-        return mask
-    eroded = ndimage.binary_erosion(mask, border_value=0)
-    return mask & ~eroded
+    pts = np.zeros(tuple(2 * n + 1 for n in mask.shape), bool)
+    area = np.zeros(pts.shape)
+    for ax in range(mask.ndim):
+        lo, hi = [slice(None)] * mask.ndim, [slice(None)] * mask.ndim
+        at = [slice(1, None, 2)] * mask.ndim
+        lo[ax], hi[ax], at[ax] = slice(None, -1), slice(1, None), slice(2, -1, 2)
+        face = mask[tuple(lo)] != mask[tuple(hi)]
+        pts[tuple(at)] = face
+        area[tuple(at)] = face * np.prod(np.delete(spacing, ax))
+    return pts, area
 
 
 def surface_distances(a, b, spacing):
-    """Two arrays of nearest-surface distances (mm): a-surface -> b-surface and
-    b-surface -> a-surface. Returns (None, None) if either mask is empty."""
+    """Nearest-surface distances (mm) a-surface -> b-surface and b-surface ->
+    a-surface, with the area (mm2) of each surface element:
+    (d_ab, d_ba, area_a, area_b). All None if either mask is empty."""
     import numpy as np
     from scipy import ndimage
     a = np.asarray(a, bool)
     b = np.asarray(b, bool)
     if not a.any() or not b.any():
-        return None, None
+        return None, None, None, None
     # Crop to a padded bounding box of the union: both surfaces lie fully inside
     # it, so every surface-to-surface distance is identical to the full-volume
-    # result, but the distance transforms run on ~1e5 voxels instead of ~1e7.
-    # The >=2-voxel pad keeps mask voxels off the crop edge so binary_erosion
-    # (border_value=0) does not invent boundary surface voxels.
+    # result, but the distance transforms run on a small block. The 1-voxel pad
+    # keeps every boundary face inside the block.
     idx = np.where(a | b)
-    crop = tuple(slice(max(0, i.min() - 2), i.max() + 3) for i in idx)
-    a, b = a[crop], b[crop]
-    sa, sb = surface_mask(a), surface_mask(b)
-    # EDT of the complement gives, at every voxel, the distance to the nearest
-    # surface voxel; sample it at the *other* surface.
-    dt_to_b = ndimage.distance_transform_edt(~sb, sampling=spacing)
-    dt_to_a = ndimage.distance_transform_edt(~sa, sampling=spacing)
-    return dt_to_b[sa], dt_to_a[sb]
+    crop = tuple(slice(max(0, i.min() - 1), i.max() + 2) for i in idx)
+    a, b = np.pad(a[crop], 1), np.pad(b[crop], 1)
+    spacing = np.asarray(spacing, float)
+    fa, wa = _surface_faces(a, spacing)
+    fb, wb = _surface_faces(b, spacing)
+    # EDT of the complement gives, at every lattice point, the distance to the
+    # nearest face; sample it at the *other* mask's faces.
+    dt_to_b = ndimage.distance_transform_edt(~fb, sampling=spacing / 2)
+    dt_to_a = ndimage.distance_transform_edt(~fa, sampling=spacing / 2)
+    return dt_to_b[fa], dt_to_a[fb], wa[fa], wb[fb]
+
+
+def _weighted_percentile(d, w, percentile):
+    """Smallest distance that covers `percentile`% of the surface area."""
+    import numpy as np
+    order = np.argsort(d, kind="stable")
+    cum = np.cumsum(w[order]) / w.sum()
+    return float(d[order][min(np.searchsorted(cum, percentile / 100), len(d) - 1)])
 
 
 def surface_distance_metrics(a, b, spacing, percentile=95):
-    """Hausdorff and average surface distances between two binary masks.
+    """Hausdorff and average surface distances between two binary masks,
+    area-weighted over the surface faces.
 
     Returns a dict (all mm): hd (max symmetric Hausdorff), hd95 (robust
     percentile Hausdorff), assd (average symmetric surface distance), masd
     (mean of the two directed mean distances). NaN when either mask is empty.
     """
     import numpy as np
-    d_ab, d_ba = surface_distances(a, b, spacing)
+    d_ab, d_ba, w_a, w_b = surface_distances(a, b, spacing)
     if d_ab is None or len(d_ab) == 0 or len(d_ba) == 0:
         return {"hd": float("nan"), "hd95": float("nan"),
                 "assd": float("nan"), "masd": float("nan")}
     hd = max(d_ab.max(), d_ba.max())
-    hd95 = max(np.percentile(d_ab, percentile), np.percentile(d_ba, percentile))
-    assd = float(np.concatenate([d_ab, d_ba]).mean())
-    masd = max(d_ab.mean(), d_ba.mean())
+    hd95 = max(_weighted_percentile(d_ab, w_a, percentile),
+               _weighted_percentile(d_ba, w_b, percentile))
+    assd = float((d_ab @ w_a + d_ba @ w_b) / (w_a.sum() + w_b.sum()))
+    masd = max(np.average(d_ab, weights=w_a), np.average(d_ba, weights=w_b))
     return {"hd": float(hd), "hd95": float(hd95), "assd": assd, "masd": float(masd)}
 
 
