@@ -328,25 +328,25 @@ def all_slices_montage(image, rater_mask, expert_mask, spacing, out_path,
     return out_path, slices
 
 
-def _iter_scan_rater(phase_key, workspace, phases, raters, rve_df, label, attempt):
+def _iter_scan_rater(phase_key, workspace, phases, raters, rve_df, label, attempt,
+                     experts=None):
     """Yield (sub, rater, image, rmask, expert, spacing, row) for every rater x
     scan in rve_df, loading the rater mask for attempt N. Expert mask + image are
-    read once per subject."""
+    read once per subject; `experts` is qa.expert_masks() (inputs/ copies only
+    when omitted)."""
     pcfg = phases[phase_key]
     phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
+    if experts is None:
+        experts = qa.expert_masks(phase_key, workspace, phases, raters)
     lut = {(r["subject"], r["rater"]): r for _, r in rve_df.iterrows()}
     for sub in sorted(rve_df["subject"].unique()):
-        expert = image = spacing = None
-        for r in raters:
-            ind = utils.input_dir(phase_dir, r, sub)
-            ep, ip = utils.resolve(ind / "expert_mask.nii.gz"), utils.resolve(ind / "image.nii.gz")
-            if ep is not None and ip is not None:
-                edata, _, spacing = utils.load_mask(ep)
-                expert = (edata == label)
-                image, _, _ = utils.load_nii(ip)
-                break
-        if expert is None or image is None:
+        ip = next((p for p in (utils.resolve(utils.input_dir(phase_dir, r, sub) / "image.nii.gz")
+                               for r in raters) if p), None)
+        if sub not in experts or ip is None:
             continue
+        edata, _, spacing = utils.load_mask(experts[sub])
+        expert = (edata == label)
+        image, _, _ = utils.load_nii(ip)
         for r in raters:
             if (sub, r) not in lut:                     # no usable mask for this attempt
                 continue
@@ -365,7 +365,7 @@ def _scan_title(phase_key, sub, r, row, attempt=None):
 
 
 def worst_slices_for_phase(phase_key, workspace, paths, phases, raters,
-                           rve_df, out_dir, label=1, n=3, attempt=1):
+                           rve_df, out_dir, label=1, n=3, attempt=1, experts=None):
     """Render a worst-vs-best montage (n worst on top, n best on bottom, by
     per-slice Dice) for every rater x scan vs expert, for attempt N. Returns a
     list of (subject, rater, path)."""
@@ -374,7 +374,7 @@ def worst_slices_for_phase(phase_key, workspace, paths, phases, raters,
     att = f"a{attempt}"
     made = []
     for sub, r, image, rmask, expert, spacing, row in _iter_scan_rater(
-            phase_key, workspace, phases, raters, rve_df, label, attempt):
+            phase_key, workspace, phases, raters, rve_df, label, attempt, experts):
         p = out_dir / f"{sub}_{r}_worst_best.png"
         res = worst_best_montage(image, rmask, expert, spacing, p,
                                  _scan_title(phase_key, sub, r, row, att),
@@ -385,7 +385,7 @@ def worst_slices_for_phase(phase_key, workspace, paths, phases, raters,
 
 
 def all_slices_for_phase(phase_key, workspace, paths, phases, raters,
-                         rve_df, out_dir, label=1, attempt=1):
+                         rve_df, out_dir, label=1, attempt=1, experts=None):
     """Render an all-SN-slices montage (one panel per slice, both contours) for
     every rater x scan vs expert, for attempt N."""
     out_dir = Path(out_dir)
@@ -393,7 +393,7 @@ def all_slices_for_phase(phase_key, workspace, paths, phases, raters,
     att = f"a{attempt}"
     made = []
     for sub, r, image, rmask, expert, spacing, row in _iter_scan_rater(
-            phase_key, workspace, phases, raters, rve_df, label, attempt):
+            phase_key, workspace, phases, raters, rve_df, label, attempt, experts):
         p = out_dir / f"{sub}_{r}_allslices.png"
         res = all_slices_montage(image, rmask, expert, spacing, p,
                                  _scan_title(phase_key, sub, r, row, att),
@@ -418,6 +418,9 @@ def main():
     workspace = args.workspace or Path(paths["workspace_root"])
     qc_root = args.qc_root or Path(paths["qc_output_root"])
     phase_dir = workspace / utils.phase_dirname(args.phase, phases[args.phase])
+    split_path = Path(args.config_dir) / "subjects_split.json"
+    experts = qa.expert_masks(args.phase, workspace, phases, raters, paths,
+                              utils.load_json(split_path) if split_path.exists() else None)
     attempts = qa.detect_attempts(phase_dir, raters)
     print(f"{args.phase}: attempts {attempts}")
 
@@ -426,16 +429,18 @@ def main():
         folder = f"a{n}"
         base = qc_root / args.phase / folder
         tables = qa.compute_phase(args.phase, workspace, phases, raters, n,
-                                  label=args.label, out_dir=base)
+                                  label=args.label, out_dir=base, experts=experts)
         per.append(tables)
         figs = generate_agreement_figures(tables, base / "plots", f"{args.phase}_{folder}")
         rve = tables.get("rater_vs_expert_per_scan")
         n_slices = 0
         if rve is not None and not rve.empty:
             worst_slices_for_phase(args.phase, workspace, paths, phases, raters,
-                                   rve, base / "worst_slices", label=args.label, attempt=n)
+                                   rve, base / "worst_slices", label=args.label, attempt=n,
+                                   experts=experts)
             allm = all_slices_for_phase(args.phase, workspace, paths, phases, raters,
-                                        rve, base / "all_slices", label=args.label, attempt=n)
+                                        rve, base / "all_slices", label=args.label, attempt=n,
+                                        experts=experts)
             n_slices = len(allm)
         print(f"  [{folder}] {len(figs)} figures, {n_slices} slice montages")
 

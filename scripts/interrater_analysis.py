@@ -7,7 +7,7 @@ and writes clean summaries to the same directory:
     summary_overall.csv     mean/sd Dice for the phase
     summary_by_pair.csv     mean/sd pairwise Dice per rater pair
     summary_by_subject.csv  mean pairwise Dice per subject (worst first)
-    summary_by_rater.csv    mean Dice vs expert per rater (phases 1-2)
+    summary_by_rater.csv    mean Dice vs expert per rater (where experts exist)
 
     python scripts/interrater_analysis.py --phase phase4
 """

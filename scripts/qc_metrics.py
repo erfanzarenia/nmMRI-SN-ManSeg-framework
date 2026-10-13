@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Compute Dice and volume QC metrics for one phase of the workspace.
 
-For the chosen phase it loads every rater's mask (and the expert mask, when the
-phase provides one) and writes tidy CSVs under <qc_output_root>/<phase>/:
+For the chosen phase it loads every rater's mask (and the expert mask wherever
+one exists, read from the source data in blind phases) and writes tidy CSVs
+under <qc_output_root>/<phase>/:
 
     dice_pairwise.csv         rater-vs-rater Dice per subject (inter-rater)
-    dice_rater_vs_expert.csv  rater-vs-expert Dice per subject (phases 1-2)
+    dice_rater_vs_expert.csv  rater-vs-expert Dice per subject
     volumes.csv               SN volume (mm^3) per source per subject
 
     python scripts/qc_metrics.py --phase phase4
@@ -49,6 +50,9 @@ def main():
         print(f"No subjects found under {phase_dir}")
         return 1
     print(f"{args.phase}: {len(subjects)} subjects, raters={raters}")
+    split_path = Path(args.config_dir) / "subjects_split.json"
+    experts = qa.expert_masks(args.phase, workspace, phases, raters, paths,
+                              utils.load_json(split_path) if split_path.exists() else None)
 
     rve, pw, vol = [], [], []
     for sub in subjects:
@@ -61,14 +65,10 @@ def main():
             binaries[r] = (data == args.label)
 
         expert = None
-        if pcfg["expert_mask"]:
-            for r in raters:
-                ep = utils.resolve(utils.input_dir(phase_dir, r, sub) / "expert_mask.nii.gz")
-                if ep is not None:
-                    edata, _, ez = utils.load_mask(ep)
-                    expert = (edata == args.label)
-                    zooms = zooms or ez
-                    break
+        if sub in experts:
+            edata, _, ez = utils.load_mask(experts[sub])
+            expert = (edata == args.label)
+            zooms = zooms or ez
 
         vox = float(np.prod(zooms)) if zooms else float("nan")
         for r, m in binaries.items():

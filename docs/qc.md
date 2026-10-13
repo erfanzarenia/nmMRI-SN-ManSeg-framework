@@ -70,7 +70,9 @@ How masks are found in `outputs/<sub>/`:
 ## Metrics and figures
 
 Dice and Jaccard, plus Hausdorff distances (max, HD95, ASSD) in mm, rater vs
-expert (phases with expert masks) and rater vs rater. Surface distances are
+expert and rater vs rater. Rater vs expert runs for every scan that has an
+expert mask, including the blind phases (3 and 4): there QC reads the expert
+from the source data through the private key, so raters never get it. Surface distances are
 measured between the voxel faces on each mask's boundary, weighted by face
 area, not between voxel centres, so they are not pinned to the 1 mm slice
 thickness and can fall below 1 mm.
@@ -164,8 +166,9 @@ Both write to `<qc_output_root>/<phase>/`, i.e. into the current run's folder.
 
 - **Phase 2 (Practice)**: rater-vs-expert calibration (shared, has expert
   masks).
-- **Phase 3 (Mock exam)**: pairwise inter-rater on the blind rehearsal set; a
-  sanity check before the real Exam. It is the first phase with CP, so the
+- **Phase 3 (Mock exam)**: pairwise inter-rater and rater vs expert (read from
+  the source data, never given to raters) on the blind rehearsal set; a sanity
+  check before the real Exam. It is the first phase with CP, so the
   protocol flags are fed back before the Exam.
 - **Phase 4 (Exam)**: inter-rater reliability (shared, blind). The primary QC
   target, for SN (metrics) and CP (protocol checks).

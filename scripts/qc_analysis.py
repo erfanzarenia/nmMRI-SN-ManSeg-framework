@@ -152,6 +152,33 @@ def grid_problem(path, sub, grids):
     return "not on this scan's image grid" + (f" (matches {', '.join(match)})" if match else "")
 
 
+def expert_masks(phase_key, workspace, phases, raters, paths=None, split=None):
+    """Expert mask per scan of a phase, {subject: Path}, for every scan that has
+    one. The copy in a rater's inputs/ is used where the phase hands it out;
+    in blind phases the source expert is found through the private key
+    (split["mapping"]) and the pool's expert_mask_pattern in paths.yaml, so QC
+    can compare against the expert without raters ever seeing it. A source mask
+    that is not on the scan's image grid is skipped."""
+    pcfg = phases[phase_key]
+    phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
+    mapping = (split or {}).get("mapping", {})
+    pool = ((paths or {}).get("pools") or {}).get(pcfg.get("pool"))
+    found = {}
+    for sub in utils.find_subjects(phase_dir, raters):
+        path = next((p for p in (utils.resolve(utils.input_dir(phase_dir, r, sub)
+                                               / "expert_mask.nii.gz") for r in raters) if p),
+                    None)
+        if path is None and pool and pool.get("expert_mask_pattern") and sub in mapping:
+            src = utils.resolve(utils.source_paths(pool, mapping[sub])[1])
+            grids = next((g for g in (_input_grids(str(phase_dir / r / "inputs"))
+                                      for r in raters) if sub in g), {})
+            if src is not None and grid_problem(src, sub, grids) is None:
+                path = src
+        if path is not None:
+            found[sub] = path
+    return found
+
+
 def rater_attempts(phase_dir, rater, sub):
     """find_rater_attempts for one subject, minus masks that are not on the
     subject's image grid (each set aside with a flag)."""
@@ -214,27 +241,26 @@ def resolve_rater_mask(phase_dir, rater, sub, label, attempt):
 
 # ----------------------------- core compute ------------------------------
 def compute_phase(phase_key, workspace, phases, raters, attempt, label=1,
-                  out_dir=None):
+                  out_dir=None, experts=None):
     """Compute every QC table for one phase under a single integer `attempt`.
     Only rater/scans that actually have that attempt contribute, so the analysis
-    adapts to what is present. Returns a dict of DataFrames; writes them to
-    <out_dir>/metrics/ when given.
+    adapts to what is present. `experts` ({subject: Path}, from expert_masks())
+    gives the expert masks, including those of blind phases; without it only
+    the copies in the raters' inputs/ are used. Returns a dict of DataFrames;
+    writes them to <out_dir>/metrics/ when given.
     """
     pcfg = phases[phase_key]
     phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
     subjects = utils.find_subjects(phase_dir, raters)
-    has_expert = bool(pcfg.get("expert_mask"))
+    if experts is None:
+        experts = expert_masks(phase_key, workspace, phases, raters)
     att = f"a{attempt}"
 
     rve_rows, rvr_rows, vol_rows, inv_rows = [], [], [], []
     for sub in subjects:
         expert, espace = None, None
-        if has_expert:
-            for r in raters:
-                ep = utils.resolve(utils.input_dir(phase_dir, r, sub) / "expert_mask.nii.gz")
-                if ep is not None:
-                    expert, espace = load_bin(ep, label)
-                    break
+        if sub in experts:
+            expert, espace = load_bin(experts[sub], label)
 
         masks, spacing = {}, espace
         for r in raters:
@@ -483,6 +509,9 @@ def main():
     workspace = args.workspace or Path(paths["workspace_root"])
     qc_root = args.qc_root or Path(paths["qc_output_root"])
     phase_dir = Path(workspace) / utils.phase_dirname(args.phase, phases[args.phase])
+    split_path = Path(args.config_dir) / "subjects_split.json"
+    experts = expert_masks(args.phase, workspace, phases, raters, paths,
+                           utils.load_json(split_path) if split_path.exists() else None)
 
     attempts = [args.attempt] if args.attempt is not None else detect_attempts(phase_dir, raters)
     print(f"{args.phase}: attempts {attempts}")
@@ -491,7 +520,7 @@ def main():
     for n in attempts:
         out_dir = qc_root / args.phase / attempt_dirname(n)
         tables = compute_phase(args.phase, workspace, phases, raters, n,
-                               label=args.label, out_dir=out_dir)
+                               label=args.label, out_dir=out_dir, experts=experts)
         per.append(tables)
         print(f"  [a{n}] {len(tables['rater_vs_expert_per_scan'])} rater-vs-expert, "
               f"{len(tables['rater_vs_rater_per_scan'])} rater-vs-rater rows")

@@ -59,21 +59,24 @@ def archive_previous(qc_root):
     return dest
 
 
-def process_attempt(ph, n, workspace, phases, raters, qc_root, label, note):
+def process_attempt(ph, n, workspace, phases, raters, qc_root, label, note, experts):
     """Full analysis for one integer attempt (metrics -> agreement figures ->
     worst/best + all-slice montages -> CP protocol checks -> report) into
     <qc_root>/<ph>/a<N>. Returns (tables, findings, report_path, n_figs, n_slices)."""
     folder, fig_tag = f"a{n}", f"{ph}_a{n}"
     base = qc_root / ph / folder
-    tables = qa.compute_phase(ph, workspace, phases, raters, n, label=label, out_dir=base)
+    tables = qa.compute_phase(ph, workspace, phases, raters, n, label=label, out_dir=base,
+                              experts=experts)
     figs = qv.generate_agreement_figures(tables, base / "plots", fig_tag)
     rve = tables.get("rater_vs_expert_per_scan")
     n_slices = 0
     if rve is not None and not rve.empty:
         qv.worst_slices_for_phase(ph, workspace, None, phases, raters, rve,
-                                  base / "worst_slices", label=label, attempt=n)
+                                  base / "worst_slices", label=label, attempt=n,
+                                  experts=experts)
         made = qv.all_slices_for_phase(ph, workspace, None, phases, raters, rve,
-                                       base / "all_slices", label=label, attempt=n)
+                                       base / "all_slices", label=label, attempt=n,
+                                       experts=experts)
         n_slices = len(made)
     if "CP" in utils.phase_labels(phases[ph]):
         qp.run_protocol(ph, workspace, phases, raters, n, base)
@@ -193,11 +196,15 @@ def main():
                                        qc_root / ph / "coverage.md"):
             print(f"    {line}")
         attempts = qa.detect_attempts(phase_dir, raters)
+        experts = qa.expert_masks(ph, workspace, phases, raters, paths, split)
+        if experts and not pcfg.get("expert_mask"):
+            print(f"  expert masks read from the source data for {len(experts)} scan(s) "
+                  "(not given to raters)")
         per, folders = [], []
         for n in attempts:
             tables, findings, path, nf, ns = process_attempt(
                 ph, n, workspace, phases, raters, qc_root, args.label,
-                qr.attempt_note(cov, f"a{n}"))
+                qr.attempt_note(cov, f"a{n}"), experts)
             per.append(tables)
             folders.append(f"a{n}")
             rep_tables[ph], rep_findings[ph], rep_reports[ph] = tables, findings, path
