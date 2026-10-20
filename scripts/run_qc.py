@@ -197,9 +197,11 @@ def main():
             print(f"    {line}")
         attempts = qa.detect_attempts(phase_dir, raters)
         experts = qa.expert_masks(ph, workspace, phases, raters, paths, split)
-        if experts and not pcfg.get("expert_mask"):
-            print(f"  expert masks read from the source data for {len(experts)} scan(s) "
-                  "(not given to raters)")
+        if experts:
+            copies = sum(Path(p).is_relative_to(phase_dir) for p in experts.values())
+            print(f"  expert masks for {len(experts)} scan(s), from the source data"
+                  + (f" ({copies} from workspace copies: key or source unavailable)"
+                     if copies else ""))
         per, folders = [], []
         for n in attempts:
             tables, findings, path, nf, ns = process_attempt(

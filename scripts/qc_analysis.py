@@ -154,30 +154,29 @@ def grid_problem(path, sub, grids):
 
 def expert_masks(phase_key, workspace, phases, raters, paths=None, split=None):
     """Expert mask per scan of a phase, {subject: Path}, for every scan that has
-    one. The copy in a rater's inputs/ is used where the phase hands it out;
-    in blind phases the source expert is found through the private key
-    (split["mapping"]) and the pool's expert_mask_pattern in paths.yaml, so QC
-    can compare against the expert without raters ever seeing it. A source mask
-    that is not on the scan's image grid is skipped."""
+    one. The source expert is used for every phase, found through the private
+    key (split["mapping"]) and the pool's expert_mask_pattern in paths.yaml, so
+    blind phases are compared against the expert without raters ever seeing it.
+    A copy in a rater's inputs/ is the fallback when the key or the source data
+    is unavailable. A mask not on the scan's image grid is skipped."""
     pcfg = phases[phase_key]
     phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
     mapping = (split or {}).get("mapping", {})
     pool = ((paths or {}).get("pools") or {}).get(pcfg.get("pool"))
     found = {}
     for sub in utils.find_subjects(phase_dir, raters):
-        path = next((p for p in (utils.resolve(utils.input_dir(phase_dir, r, sub)
-                                               / "expert_mask.nii.gz") for r in raters) if p),
-                    None)
-        if path is None and pool and pool.get("expert_mask_pattern") and sub in mapping:
-            src = utils.resolve(utils.source_paths(pool, mapping[sub])[1])
-            grids = next((g for g in (_input_grids(str(phase_dir / r / "inputs"))
-                                      for r in raters) if sub in g), {})
-            if src is not None and grid_problem(src, sub, grids) is None:
-                path = src
+        grids = next((g for g in (_input_grids(str(phase_dir / r / "inputs"))
+                                  for r in raters) if sub in g), {})
+        candidates = []
+        if pool and pool.get("expert_mask_pattern") and sub in mapping:
+            candidates.append(utils.resolve(utils.source_paths(pool, mapping[sub])[1]))
+        candidates += [utils.resolve(utils.input_dir(phase_dir, r, sub) / "expert_mask.nii.gz")
+                       for r in raters]
+        path = next((p for p in candidates
+                     if p is not None and grid_problem(p, sub, grids) is None), None)
         if path is not None:
             found[sub] = path
     return found
-
 
 def rater_attempts(phase_dir, rater, sub):
     """find_rater_attempts for one subject, minus masks that are not on the

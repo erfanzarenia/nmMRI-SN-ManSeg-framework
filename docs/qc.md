@@ -71,8 +71,10 @@ How masks are found in `outputs/<sub>/`:
 
 Dice and Jaccard, plus Hausdorff distances (max, HD95, ASSD) in mm, rater vs
 expert and rater vs rater. Rater vs expert runs for every scan that has an
-expert mask, including the blind phases (3 and 4): there QC reads the expert
-from the source data through the private key, so raters never get it. Surface distances are
+expert mask, including the blind phases (3 and 4). QC always reads the expert
+from the source data through the private key (raters never get it in blind
+phases); a copy in a rater's `inputs/` is used only if the key or the source is
+unavailable. No source ID or file name appears in the QC outputs. Surface distances are
 measured between the voxel faces on each mask's boundary, weighted by face
 area, not between voxel centres, so they are not pinned to the 1 mm slice
 thickness and can fall below 1 mm.
