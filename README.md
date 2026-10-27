@@ -73,9 +73,14 @@ segmented, and [docs/qc.md](docs/qc.md) for QC details.
   production is re-divided with `split_subjects.py --repartition phase6
   --workspace <ws>`, which keeps a subject with any rater who already has output
   files for it, or is left for a later division with `--defer phase6`.
-- Production (Phase 6) gives about 10% of its subjects to every rater (the
-  overlap, always including sub-1093 and sub-5064) and divides the rest at
-  random across raters.
+- Production (Phase 6) is segmented by R4, R5, R6 and R7 only (`raters` in
+  phases.yaml). About 10% of its subjects go to all four (the overlap, always
+  including sub-1093 and sub-5064, split evenly between adults and adolescents
+  via `balance_by: age_group`) and the rest is divided at random, evenly per
+  rater and per age group. Its subjects follow the study list
+  `config/subjects_study.csv` (participant, age group, discrepancy notes);
+  `--repartition phase6` gives newly listed subjects new IDs, keeps existing
+  ones, and drops unlisted ones that have no outputs.
 - The five SNIT calibration scans are a fixed list in phases.yaml. They also
   keep their production assignment, under other workspace IDs.
 - `make_workspace.py` never overwrites an input already in place (`--overwrite`

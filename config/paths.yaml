@@ -35,7 +35,7 @@ pools:
     run: 1
     image_pattern: "{subject}/anat/{subject}_acq-CombEchoNM_run-{run:02d}_GRE.nii.gz"
     expert_mask_pattern: null
-    subjects: subjects_study.txt
+    subjects: subjects_study.csv
 
 # Where the multi-rater segmentation workspace is built (outside the repo).
 workspace_root: /path/to/ManSeg_Workspace

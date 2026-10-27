@@ -15,8 +15,10 @@
 # them) and split_subjects.py allocates only phases that are new here. Raters
 # added to raters.json get every shared phase's subjects; a partitioned phase is
 # re-divided only with `split_subjects.py --repartition phaseN`, which keeps its
-# subjects and IDs and leaves each subject with any rater who already has output
-# files for it. `--defer phaseN` adds the raters now and divides that phase later.
+# subjects' IDs and leaves each subject with any rater who already has output
+# files for it; for an `n_subjects: all` phase it also follows the pool list
+# (new subjects get new IDs, unlisted ones without outputs are dropped).
+# `--defer phaseN` adds the raters now and divides that phase later.
 #
 # Each phaseN block:
 #   name        slug for the workspace folder -> phaseN_<name>
@@ -31,6 +33,10 @@
 #   overlap_subjects
 #               partitioned only: source IDs that must be in the overlap; the
 #               rest of it is picked at random among subjects with an image
+#   raters      optional: only these raters (from raters.json) get the phase
+#   balance_by  partitioned only, optional: a column of the pool's subject CSV
+#               (e.g. age_group); the overlap is split evenly across its values
+#               and each rater gets a near-equal share of each value
 #   expert_mask place an expert_mask alongside each image (pool must define
 #               expert_mask_pattern)
 #   attempts    1 -> outputs/<sub>/<rater>_mask.nii.gz
@@ -107,6 +113,8 @@ phase6:
   assignment: partitioned
   overlap: 0.10
   overlap_subjects: [sub-1093, sub-5064]
+  raters: [R4, R5, R6, R7]       # only these raters segment production
+  balance_by: age_group          # split the overlap evenly between age groups
   expert_mask: false
   attempts: 1
   labels: [SN, CP]

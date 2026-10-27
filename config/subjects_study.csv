@@ -1,0 +1,10 @@
+# Study subjects (calibration + production), one row per participant. age_group
+# is the column production balances on (balance_by in phases.yaml); note is free
+# text. Must be disjoint from subjects_labeled.txt.
+participant,age_group,note
+sub-1001,Adult,
+sub-1002,Adult,
+sub-1003,Adult,
+sub-5001,Adolescent,
+sub-5002,Adolescent,
+sub-5003,Adolescent,
