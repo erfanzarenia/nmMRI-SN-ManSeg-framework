@@ -44,13 +44,28 @@ def load_config(config_dir=CONFIG_DIR):
 
 
 def read_subject_list(path):
-    """Read a subject-list file: one BIDS label per line, '#' starts a comment."""
+    """Read a subject list: a text file with one BIDS label per line ('#' starts
+    a comment), or a CSV with a `participant` column (see read_subject_info)."""
+    if Path(path).suffix == ".csv":
+        return list(read_subject_info(path))
     subjects = []
     for line in Path(path).read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if line:
             subjects.append(line)
     return subjects
+
+
+def read_subject_info(path):
+    """{participant: {column: value}} from a CSV subject list, in file order.
+    Text subject lists carry no columns, so they give empty dicts."""
+    import csv
+    if Path(path).suffix != ".csv":
+        return {s: {} for s in read_subject_list(path)}
+    with open(path, newline="") as f:                # '#' lines are comments
+        lines = [line for line in f if not line.lstrip().startswith("#")]
+        rows = [r for r in csv.DictReader(lines) if (r.get("participant") or "").strip()]
+    return {r["participant"].strip(): r for r in rows}
 
 
 def phase_keys(phases):

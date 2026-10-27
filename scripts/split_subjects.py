@@ -62,21 +62,32 @@ def allocate(subjects, n):
     return subjects[:n], subjects[n:]
 
 
-def partition(order, raters, n_overlap, required=(), eligible=None, locked=None):
+def partition(order, raters, n_overlap, required=(), eligible=None, locked=None,
+              groups=None):
     """Divide a partitioned phase's workspace IDs, in random `order`, across raters.
 
     The overlap, given to every rater, is `required` plus the first other IDs of
-    `order` that are `eligible` (all when None), up to n_overlap. Every other ID
+    `order` that are `eligible` (all when None), up to n_overlap; with `groups`
+    ({ID: group}) the picks go to the group with the fewest overlap IDs so far,
+    so the overlap is split as evenly as possible across groups. Every other ID
     goes to the rater with the fewest so far (ties by rater order, i.e.
-    round-robin), except IDs in `locked` ({ID: raters}), which go to exactly
-    those raters. Returns (by_rater, overlap), both sorted."""
-    locked = locked or {}
+    round-robin), taking eligible IDs before the rest and, within each, one
+    group after another, so each rater's count of eligible IDs and of each group
+    differs by at most one. IDs in `locked` ({ID: raters}) go to exactly those
+    raters. Returns (by_rater, overlap), both sorted."""
+    locked, groups = locked or {}, groups or {}
     overlap = list(dict.fromkeys(required))
-    for wid in order:
-        if len(overlap) >= n_overlap:
-            break
-        if wid not in overlap and (eligible is None or wid in eligible):
-            overlap.append(wid)
+    picks = [w for w in order if w not in overlap and (eligible is None or w in eligible)]
+    while len(overlap) < n_overlap and picks:
+        if groups:
+            count = {g: sum(groups.get(w) == g for w in overlap)
+                     for g in {groups.get(w) for w in picks}}
+            want = min(count, key=lambda g: (count[g], str(g)))
+            wid = next(w for w in picks if groups.get(w) == want)
+        else:
+            wid = picks[0]
+        picks.remove(wid)
+        overlap.append(wid)
     by_rater = {r: list(overlap) for r in raters}
     load = dict.fromkeys(raters, 0)
     rest = [w for w in order if w not in overlap]
@@ -84,6 +95,8 @@ def partition(order, raters, n_overlap, required=(), eligible=None, locked=None)
         for r in locked.get(wid, ()):
             by_rater[r].append(wid)
             load[r] += 1
+    rest.sort(key=lambda w: (eligible is not None and w not in eligible,
+                             str(groups.get(w, ""))))       # stable: keeps random order
     for wid in rest:
         if wid not in locked:
             r = min(raters, key=load.get)
@@ -98,16 +111,27 @@ def load_pools(paths, config_dir):
             for name, pdef in paths["pools"].items()}
 
 
-def phase_entry(pcfg, pool_name, order, raters, mapping, eligible=None, locked=None):
-    """Split entry for one phase from its workspace IDs in random `order`."""
+def phase_raters(pcfg, raters):
+    """Raters of a phase: its `raters` list when set, else every rater."""
+    return [r for r in raters if r in pcfg.get("raters", raters)]
+
+
+def phase_entry(pcfg, pool_name, order, raters, mapping, eligible=None, locked=None,
+                info=None):
+    """Split entry for one phase from its workspace IDs in random `order`.
+    `info` is the pool's subject info (utils.read_subject_info), used when the
+    phase sets `balance_by` to one of its columns (e.g. age_group)."""
+    raters = phase_raters(pcfg, raters)
     entry = {"name": pcfg["name"], "pool": pool_name,
              "assignment": pcfg["assignment"], "subjects": sorted(order)}
     if pcfg["assignment"] == "partitioned":
         by_source = {mapping[w]: w for w in order}
         required = [by_source[s] for s in pcfg.get("overlap_subjects", [])]
         n_overlap = max(round(float(pcfg.get("overlap", 0) or 0) * len(order)), len(required))
+        col = pcfg.get("balance_by")
+        groups = {w: (info or {}).get(mapping[w], {}).get(col, "") for w in order} if col else None
         entry["by_rater"], overlap = partition(order, raters, n_overlap, required,
-                                               eligible, locked)
+                                               eligible, locked, groups)
         if overlap:
             entry["overlap"] = overlap
     else:                                           # shared: same subjects for all
@@ -195,6 +219,8 @@ def main():
     added = [r for r in raters if old and r not in old["raters"]]
 
     pools = load_pools(paths, args.config_dir)
+    infos = {name: utils.read_subject_info(args.config_dir / pdef["subjects"])
+             for name, pdef in paths["pools"].items()}
     seen = {}
     for name, subs in pools.items():
         for s in subs:
@@ -210,6 +236,13 @@ def main():
         stray = [s for s in pcfg.get("overlap_subjects", []) if s not in pools[pcfg["pool"]]]
         if stray:
             ap.error(f"{key}: overlap_subjects {', '.join(stray)} not in pool '{pcfg['pool']}'")
+        unknown = [r for r in pcfg.get("raters", []) if r not in raters]
+        if unknown:
+            ap.error(f"{key}: raters {', '.join(unknown)} are not in raters.json")
+        col = pcfg.get("balance_by")
+        if col and not any(col in v for v in infos[pcfg["pool"]].values()):
+            ap.error(f"{key}: balance_by '{col}' is not a column of pool "
+                     f"'{pcfg['pool']}' subjects ({paths['pools'][pcfg['pool']]['subjects']})")
 
     rng = random.Random(seed)
     remaining = {}
@@ -253,23 +286,55 @@ def main():
 
     locks = {}
     workspace = Path(args.workspace or paths["workspace_root"])
+    changes = {}
     for key in args.repartition:
         pcfg, entry = phases[key], entries[key]
         if not workspace.is_dir():
             ap.error(f"--repartition checks the workspace for existing outputs, but "
                      f"{workspace} does not exist; pass --workspace")
-        members = {mapping[w] for w in entry["subjects"]}
+        folders = sorted({utils.phase_dirname(key, pcfg), utils.phase_dirname(kept[key], pcfg)})
+        locks[key] = output_locks(workspace, folders, old["raters"], entry["subjects"])
+        outside = sorted({r for rs in locks[key].values() for r in rs}
+                         - set(phase_raters(pcfg, raters)))
+        if outside:
+            ap.error(f"{key}: {', '.join(outside)} already have outputs here but are not "
+                     "among the phase's raters")
+        subjects = list(entry["subjects"])
+        if pcfg.get("n_subjects") == "all" and "subjects" not in pcfg:
+            # "all" follows the pool list: keep the IDs of subjects still in it,
+            # give new subjects new IDs, and drop subjects no longer listed
+            # (never one with outputs).
+            others = {mapping[w] for k, e in entries.items()
+                      if k != key and e["pool"] == pcfg["pool"] and "subjects" not in phases[k]
+                      for w in e["subjects"]}
+            want = [s for s in dict.fromkeys(pools[pcfg["pool"]]) if s not in others]
+            have = {mapping[w]: w for w in subjects}
+            gone = [w for s, w in have.items() if s not in want]
+            stuck = [w for w in gone if w in locks[key]]
+            if stuck:
+                ap.error(f"{key}: {', '.join(stuck)} left the pool list but have outputs")
+            new = [s for s in want if s not in have]
+            random.Random(f"{seed}:{pcfg['name']}:added").shuffle(new)   # blind ID order
+            ids = [f"{prefix}{i:0{width}d}" for i in range(counter, counter + len(new))]
+            counter += len(new)
+            mapping.update(zip(ids, new))
+            subjects = [w for w in subjects if w not in gone] + ids
+            changes[key] = (ids, gone)
+        members = {mapping[w] for w in subjects}
         stray = [s for s in pcfg.get("overlap_subjects", []) if s not in members]
         if stray:
             ap.error(f"{key}: overlap_subjects {', '.join(stray)} are not in this phase")
-        folders = sorted({utils.phase_dirname(key, pcfg), utils.phase_dirname(kept[key], pcfg)})
-        locks[key] = output_locks(workspace, folders, old["raters"], entry["subjects"])
-        order = list(entry["subjects"])
+        order = sorted(subjects)
         random.Random(f"{seed}:{pcfg['name']}:repartition").shuffle(order)
         entries[key] = phase_entry(pcfg, pcfg["pool"], order, raters, mapping,
-                                   eligible(pcfg["pool"], order), locks[key])
+                                   eligible(pcfg["pool"], order), locks[key],
+                                   infos[pcfg["pool"]])
         print(f"{key}: checked {', '.join(folders)} under {workspace}; "
               f"{sum(map(len, locks[key].values()))} rater/subject pair(s) with outputs stay put")
+        if key in changes:
+            ids, gone = changes[key]
+            print(f"{key}: {len(ids)} subject(s) new to the pool list get new IDs; "
+                  f"{len(gone)} no longer listed are dropped: {', '.join(sorted(gone)) or 'none'}")
 
     # New drawn phases are numbered before new listed ones (stable sort keeps
     # phase order), so a listed phase never shifts a draw.
@@ -297,7 +362,8 @@ def main():
         mapping.update(zip(ids, taken))
         partitioned = pcfg["assignment"] == "partitioned"
         entries[key] = phase_entry(pcfg, pool_name, ids, raters, mapping,
-                                   eligible(pool_name, ids) if partitioned else None)
+                                   eligible(pool_name, ids) if partitioned else None,
+                                   info=infos[pool_name])
 
     split = {"seed": seed, "raters": raters, "mapping": mapping,
              "phases": {key: entries[key] for key in keys}}
@@ -307,11 +373,11 @@ def main():
         moved = [w for w, s in before["mapping"].items() if mapping.get(w) != s]
         for key, old_key in kept.items():
             b, a = before["phases"][old_key], split["phases"][key]
-            if a["subjects"] != b["subjects"]:
-                moved.append(f"{key} subjects")
-            elif key in args.repartition:
+            if key in args.repartition:                 # subjects may follow the pool
                 moved += [f"{key} {r}/{w}" for w, rs in locks[key].items()
-                          for r in rs if w not in a["by_rater"][r]]
+                          for r in rs if w not in a["by_rater"].get(r, [])]
+            elif a["subjects"] != b["subjects"]:
+                moved.append(f"{key} subjects")
             elif any(a["by_rater"].get(r) != v for r, v in b["by_rater"].items()):
                 moved.append(f"{key} assignments")
         if moved:
