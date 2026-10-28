@@ -102,6 +102,31 @@ def partition(order, raters, n_overlap, required=(), eligible=None, locked=None,
             r = min(raters, key=load.get)
             by_rater[r].append(wid)
             load[r] += 1
+    # Keep the overlap hidden: no rater's first scan (lowest ID) may be an
+    # overlap subject, or every rater would open the same scan first. Such an
+    # ID trades places with a non-overlap ID of the same group (and
+    # eligibility) from the middle of the ID range; loads stay the same.
+    owner = {w: r for r, v in by_rater.items() for w in v if w not in overlap}
+    ranked = sorted(order)
+    for _ in range(len(order)):
+        first = next((min(v) for v in by_rater.values()
+                      if min(v) in overlap and min(v) not in required), None)
+        if first is None:
+            break
+        mates = [w for w in ranked[len(ranked) // 3: 2 * len(ranked) // 3]
+                 if w in owner and w not in locked
+                 and groups.get(w) == groups.get(first)
+                 and (eligible is None or w in eligible)]
+        if not mates:
+            break
+        swap = mates[len(mates) // 2]
+        q = owner.pop(swap)
+        overlap[overlap.index(first)] = swap
+        owner[first] = q
+        for r in raters:
+            if r != q:
+                by_rater[r].remove(first)
+                by_rater[r].append(swap)
     return {r: sorted(v) for r, v in by_rater.items()}, sorted(overlap)
 
 
