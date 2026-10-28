@@ -13,7 +13,8 @@
 # image_pattern / expert_mask_pattern (relative to data_root, "{subject}" is the
 # BIDS label; any other pool key can be used too, e.g. "{run:02d}"). Globs ("*")
 # and .nii / .nii.gz are both accepted; inputs are normalized to gzip-compressed
-# .nii.gz when the workspace is built.
+# .nii.gz when the workspace is built. image_pattern may be a list of fallbacks,
+# each tried in every data root before the next.
 
 pools:
   # Labeled set (training, phases 1-4): Echo 1 NM images + expert SN masks.
@@ -26,14 +27,21 @@ pools:
 
   # SNIT study set (SNIT calibration + production): the regular NM combined-echo
   # ("combo echo") image, not Echo 1. Adults and adolescents are separate BIDS
-  # datasets. `run` selects the NM run (1 or 2) for every subject.
+  # datasets; SNIT_Bids_New holds subjects never converted into them. `run`
+  # selects the NM run (1 or 2) for every subject. The second pattern is the
+  # older name of the same image (acq-NM ... T2starw), used only when no
+  # CombEchoNM file exists: it was voxel-identical to CombEchoNM for all 179
+  # subjects that have both (checked 2026-10-28).
   study:
     data_root:
       - /path/to/study_bids_adults
       - /path/to/study_bids_adolescents
+      - /path/to/study_bids_new
     layout: bids
     run: 1
-    image_pattern: "{subject}/anat/{subject}_acq-CombEchoNM_run-{run:02d}_GRE.nii.gz"
+    image_pattern:
+      - "{subject}/anat/{subject}_acq-CombEchoNM_run-{run:02d}_GRE.nii.gz"
+      - "{subject}/anat/{subject}_acq-NM_run-{run:02d}_T2starw.nii.gz"
     expert_mask_pattern: null
     subjects: subjects_study.csv
 

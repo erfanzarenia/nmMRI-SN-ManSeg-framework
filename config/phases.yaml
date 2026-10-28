@@ -28,8 +28,9 @@
 #               are not drawn from it, so they may also sit in a drawn phase.
 #   assignment  shared      -> every rater gets the same subjects
 #               partitioned -> subjects divided across raters
-#   overlap     partitioned only: fraction [0..1] of the phase's subjects also
-#               given to EVERY rater (hidden repeats) for reliability monitoring
+#   overlap     partitioned only: fraction [0..1) of the phase's subjects, or a
+#               number of subjects (>= 1), also given to EVERY rater (hidden
+#               repeats) for reliability monitoring
 #   overlap_subjects
 #               partitioned only: source IDs that must be in the overlap; the
 #               rest of it is picked at random among subjects with an image
@@ -111,7 +112,7 @@ phase6:
   pool: study
   n_subjects: all
   assignment: partitioned
-  overlap: 0.10
+  overlap: 16                   # ~8% of 193 scans; keeps each rater at ~60
   overlap_subjects: [sub-1093, sub-5064]
   raters: [R4, R5, R6, R7]       # only these raters segment production
   balance_by: age_group          # split the overlap evenly between age groups
