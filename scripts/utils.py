@@ -144,16 +144,20 @@ def pool_patterns(pdef):
 def source_paths(pdef, subject):
     """(image, expert_mask or None) source paths for one subject of a pool.
     Patterns are filled with the subject and the pool's own keys (e.g. run).
-    With several data roots the first root holding the image is used; if none
-    has it, the path under the first root is returned (and reported missing)."""
+    image_pattern may be a list: each pattern is tried in every data root
+    before the next pattern (fallbacks, e.g. an older file name for the same
+    image). The first existing image wins; if none exists, the first pattern
+    under the first root is returned (and reported missing)."""
     roots = pdef["data_root"]
     roots = [roots] if isinstance(roots, str) else roots
-    image_pat, expert_pat = pool_patterns(pdef)
+    image_pats, expert_pat = pool_patterns(pdef)
+    image_pats = [image_pats] if isinstance(image_pats, str) else image_pats
     fields = {**pdef, "subject": subject}
-    image = image_pat.format(**fields)
-    root = next((Path(r) for r in roots if resolve(Path(r) / image)), Path(roots[0]))
+    images = [Path(r) / p.format(**fields) for p in image_pats for r in roots]
+    image = next((i for i in images if resolve(i)), images[0])
+    root = next(Path(r) for r in roots if image.is_relative_to(r))
     expert = root / expert_pat.format(**fields) if expert_pat else None
-    return root / image, expert
+    return image, expert
 
 
 # ------------------------------ NIfTI --------------------------------

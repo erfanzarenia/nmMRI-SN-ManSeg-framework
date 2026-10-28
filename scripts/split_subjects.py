@@ -127,7 +127,8 @@ def phase_entry(pcfg, pool_name, order, raters, mapping, eligible=None, locked=N
     if pcfg["assignment"] == "partitioned":
         by_source = {mapping[w]: w for w in order}
         required = [by_source[s] for s in pcfg.get("overlap_subjects", [])]
-        n_overlap = max(round(float(pcfg.get("overlap", 0) or 0) * len(order)), len(required))
+        frac = float(pcfg.get("overlap", 0) or 0)       # a fraction, or a count when >= 1
+        n_overlap = max(int(frac) if frac >= 1 else round(frac * len(order)), len(required))
         col = pcfg.get("balance_by")
         groups = {w: (info or {}).get(mapping[w], {}).get(col, "") for w in order} if col else None
         entry["by_rater"], overlap = partition(order, raters, n_overlap, required,
