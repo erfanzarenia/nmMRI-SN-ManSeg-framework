@@ -36,9 +36,24 @@ evenly as possible, across raters. --repartition redoes this for existing
 phases with the same subjects and IDs; a subject a rater already has output
 files for (in the workspace) stays with that rater.
 
+--rebalance is the gentler option for a phase in progress: it keeps the overlap
+and every assignment, tops the overlap up to its new size from subjects nobody
+has started, and hands over only as many unstarted subjects as are needed to even
+out the raters. Output files show finished work but not a scan open and unsaved,
+so --hold RATER:ID pins a subject known to be in progress and --hold-next N pins
+each rater's next N subjects. Everything held counts as started, in both modes.
+
+--add-new is the gentlest: for a partitioned phase taking `n_subjects: all`, it
+gives subjects new to the pool list new IDs (after the highest existing one) and
+hands each to the rater with the fewest own subjects, then the fewest of its
+age group (`balance_by`). Every existing ID, assignment and the overlap stay
+exactly as they are.
+
     python scripts/split_subjects.py --dry-run      # preview; writes nothing
     python scripts/split_subjects.py                # allocate new phases only
     python scripts/split_subjects.py --repartition phase6 --workspace <ws>
+    python scripts/split_subjects.py --rebalance phase6 --hold-next 5 --hold R1:sub-0076
+    python scripts/split_subjects.py --add-new phase6  # new pool subjects only
     python scripts/split_subjects.py --defer phase6  # add raters, divide later
     python scripts/split_subjects.py --regenerate   # rebuild all from the seed
 """
@@ -48,6 +63,7 @@ import random
 import re
 import shutil
 import time
+from collections import Counter
 from pathlib import Path
 
 import utils
@@ -60,6 +76,22 @@ def allocate(subjects, n):
         return subjects, []
     n = int(n)
     return subjects[:n], subjects[n:]
+
+
+def top_up_overlap(overlap, picks, n_overlap, groups):
+    """Add IDs from `picks` to `overlap` (in place) until it has n_overlap; with
+    `groups` each one goes to the group with the fewest overlap IDs so far."""
+    picks = list(picks)
+    while len(overlap) < n_overlap and picks:
+        if groups:
+            count = {g: sum(groups.get(w) == g for w in overlap)
+                     for g in {groups.get(w) for w in picks}}
+            want = min(count, key=lambda g: (count[g], str(g)))
+            wid = next(w for w in picks if groups.get(w) == want)
+        else:
+            wid = picks[0]
+        picks.remove(wid)
+        overlap.append(wid)
 
 
 def partition(order, raters, n_overlap, required=(), eligible=None, locked=None,
@@ -77,17 +109,8 @@ def partition(order, raters, n_overlap, required=(), eligible=None, locked=None,
     raters. Returns (by_rater, overlap), both sorted."""
     locked, groups = locked or {}, groups or {}
     overlap = list(dict.fromkeys(required))
-    picks = [w for w in order if w not in overlap and (eligible is None or w in eligible)]
-    while len(overlap) < n_overlap and picks:
-        if groups:
-            count = {g: sum(groups.get(w) == g for w in overlap)
-                     for g in {groups.get(w) for w in picks}}
-            want = min(count, key=lambda g: (count[g], str(g)))
-            wid = next(w for w in picks if groups.get(w) == want)
-        else:
-            wid = picks[0]
-        picks.remove(wid)
-        overlap.append(wid)
+    top_up_overlap(overlap, [w for w in order if w not in overlap
+                             and (eligible is None or w in eligible)], n_overlap, groups)
     by_rater = {r: list(overlap) for r in raters}
     load = dict.fromkeys(raters, 0)
     rest = [w for w in order if w not in overlap]
@@ -128,6 +151,92 @@ def partition(order, raters, n_overlap, required=(), eligible=None, locked=None,
                 by_rater[r].remove(first)
                 by_rater[r].append(swap)
     return {r: sorted(v) for r, v in by_rater.items()}, sorted(overlap)
+
+
+def rebalance(current, overlap, raters, n_overlap, order, eligible=None, locked=None,
+              groups=None, required=()):
+    """Even out a partitioned phase in progress, moving as little as possible.
+
+    Every current assignment stays. The overlap grows to n_overlap from eligible
+    IDs not in `locked` ({ID: raters}), so nobody loses a started subject to it
+    and each picked ID simply also goes to every rater. A larger overlap shrinks
+    to n_overlap instead: it drops the highest IDs (raters reach them last) that
+    nobody has started and that are not `required`, from the group with the most
+    overlap IDs each time, and each goes on to one rater only, the one with the
+    fewest subjects (then the fewest of its group). Then
+    unlocked non-overlap IDs pass from the most to the least loaded rater until
+    loads differ by at most one, taking the kind of ID (group and eligibility)
+    the giver has most of relative to the taker, in random `order`, so raters
+    stay balanced on those too. Returns (by_rater, overlap), both sorted."""
+    locked, groups = locked or {}, groups or {}
+    overlap = list(overlap)
+    top_up_overlap(overlap, [w for w in order if w not in overlap and w not in locked
+                             and (eligible is None or w in eligible)], n_overlap, groups)
+    dropped = []
+    while len(overlap) > n_overlap:
+        free = [w for w in overlap if w not in locked and w not in required]
+        if not free:
+            print("WARNING: every overlap subject is started or required; it stays larger.")
+            break
+        count = Counter(groups.get(w, "") for w in overlap)
+        wid = max(free, key=lambda w: (count[groups.get(w, "")], w))
+        overlap.remove(wid)
+        dropped.append(wid)
+    by_rater = {r: {w for w in current.get(r, ()) if w not in overlap} for r in raters}
+    for r in raters:
+        by_rater[r] -= set(dropped)
+    for wid in dropped:
+        g = groups.get(wid, "")
+        r = min(raters, key=lambda r: (len(by_rater[r]),
+                                       sum(groups.get(w, "") == g for w in by_rater[r])))
+        by_rater[r].add(wid)
+
+    def kind(w):
+        return groups.get(w, ""), eligible is None or w in eligible
+
+    rank = {w: i for i, w in enumerate(order)}
+    while True:
+        give = max(raters, key=lambda r: len(by_rater[r]))
+        take = min(raters, key=lambda r: len(by_rater[r]))
+        if len(by_rater[give]) - len(by_rater[take]) <= 1:
+            break
+        free = sorted((w for w in by_rater[give] if w not in locked), key=rank.get)
+        if not free:
+            print(f"WARNING: {give} has only started subjects left; loads stay uneven.")
+            break
+        have, want = ([kind(w) for w in by_rater[r]] for r in (give, take))
+        wid = max(free, key=lambda w: have.count(kind(w)) - want.count(kind(w)))
+        by_rater[give].remove(wid)
+        by_rater[take].add(wid)
+    return {r: sorted(by_rater[r] | set(overlap)) for r in raters}, sorted(overlap)
+
+
+def add_new(by_rater, overlap, raters, new, groups=None):
+    """Hand each ID of `new` (in its random order, one group after another) to
+    the rater with the fewest non-overlap IDs, ties going to the one with the
+    fewest of that ID's group, then by rater order. Existing IDs never move.
+    Returns by_rater with every list sorted."""
+    groups = groups or {}
+    by_rater = {r: list(by_rater.get(r, [])) for r in raters}
+    own = {r: [w for w in v if w not in overlap] for r, v in by_rater.items()}
+    for wid in sorted(new, key=lambda w: str(groups.get(w, ""))):   # stable: keeps order
+        g = groups.get(wid, "")
+        r = min(raters, key=lambda r: (len(own[r]),
+                                       sum(groups.get(w, "") == g for w in own[r])))
+        own[r].append(wid)
+        by_rater[r].append(wid)
+    return {r: sorted(v) for r, v in by_rater.items()}
+
+
+def next_up(by_rater, overlap, started, n):
+    """{ID: raters} for each rater's next n non-overlap IDs in ID order (raters
+    work up from their lowest ID) that are not in `started`."""
+    held = {}
+    for r, ids in by_rater.items():
+        for w in [w for w in sorted(ids) if w not in overlap
+                  and r not in started.get(w, ())][:n]:
+            held.setdefault(w, set()).add(r)
+    return held
 
 
 def load_pools(paths, config_dir):
@@ -214,6 +323,18 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Print the split without writing it.")
     ap.add_argument("--repartition", nargs="+", default=[], metavar="PHASE",
                     help="Re-divide these existing partitioned phases across the current raters.")
+    ap.add_argument("--rebalance", nargs="+", default=[], metavar="PHASE",
+                    help="Even out these partitioned phases across their raters with as few "
+                         "moves as possible, keeping the overlap and growing it to `overlap`.")
+    ap.add_argument("--add-new", nargs="+", default=[], metavar="PHASE",
+                    help="Give subjects new to the pool list new IDs in these partitioned "
+                         "phases and add them to the least loaded raters; nothing else moves.")
+    ap.add_argument("--hold", nargs="+", default=[], metavar="RATER:ID",
+                    help="With --repartition or --rebalance: subjects a rater has started "
+                         "without any output file yet; they stay with that rater.")
+    ap.add_argument("--hold-next", type=int, default=0, metavar="N",
+                    help="With --repartition or --rebalance: also keep each rater's next N "
+                         "unstarted subjects with them, in case one is open and unsaved.")
     ap.add_argument("--defer", nargs="+", default=[], metavar="PHASE",
                     help="Leave these partitioned phases untouched while raters are added; "
                          "the new raters get subjects there at a later --repartition.")
@@ -278,13 +399,20 @@ def main():
         remaining[name] = pool
 
     kept = match_existing(old, phases, keys, ap.error) if old else {}
-    for flag, names in (("--repartition", args.repartition), ("--defer", args.defer)):
+    for flag, names in (("--repartition", args.repartition), ("--rebalance", args.rebalance),
+                        ("--defer", args.defer), ("--add-new", args.add_new)):
         for key in names:
             if key not in kept or phases[key]["assignment"] != "partitioned":
                 ap.error(f"{flag} {key}: not a partitioned phase of the existing split")
-    both = sorted(set(args.repartition) & set(args.defer))
+    redivide = list(args.repartition) + list(args.rebalance)
+    both = sorted((set(args.repartition) & set(args.rebalance)) |
+                  ((set(redivide) | set(args.add_new)) & set(args.defer)) |
+                  (set(redivide) & set(args.add_new)))
     if both:
-        ap.error(f"{', '.join(both)}: cannot be both --repartition and --defer")
+        ap.error(f"{', '.join(both)}: pick one of --repartition, --rebalance, --add-new "
+                 "and --defer")
+    if (args.hold or args.hold_next) and not redivide:
+        ap.error("--hold and --hold-next only apply with --repartition or --rebalance")
     mapping = dict(old["mapping"]) if old else {}   # workspace ID -> source ID
     entries = {}
     for key, old_key in kept.items():
@@ -292,9 +420,10 @@ def main():
         if added and entry["assignment"] == "shared":
             entry = entry | {"by_rater": entry["by_rater"] |
                              {r: list(entry["subjects"]) for r in added}}
-        elif added and key not in args.repartition and key not in args.defer:
+        elif added and key not in redivide and key not in args.defer:
             ap.error(f"{key}_{entry['name']} is partitioned: adding raters needs "
-                     f"--repartition {key}, or --defer {key} to divide it later")
+                     f"--repartition {key}, --rebalance {key}, or --defer {key} to "
+                     "divide it later")
         entries[key] = entry
         if "subjects" not in phases[key]:           # kept draws leave their pool
             taken = {mapping[w] for w in entry["subjects"]}
@@ -302,22 +431,52 @@ def main():
             remaining[pool_name] = [s for s in remaining[pool_name] if s not in taken]
     counter = 1 + max((int(re.search(r"(\d+)$", w).group(1)) for w in mapping), default=0)
 
-    def eligible(pool_name, ids):
-        """IDs whose source image exists (None when no image is found at all)."""
+    def eligible(pool_name, ids, runs=None):
+        """IDs whose source image exists, for each of `runs` when given (None when
+        no image is found at all)."""
         pdef = paths["pools"][pool_name]
-        have = {w for w in ids if utils.resolve(utils.source_paths(pdef, mapping[w])[0])}
+        have = {w for w in ids if all(utils.resolve(utils.source_paths(pdef, mapping[w], run)[0])
+                                      for run in runs or [None])}
         if not have:
             print(f"WARNING: no '{pool_name}' images found; overlap picks ignore availability.")
         return have or None
 
+    for key in args.add_new:
+        pcfg, entry = phases[key], entries[key]
+        if pcfg.get("n_subjects") != "all" or "subjects" in pcfg:
+            ap.error(f"--add-new {key}: only for a phase with n_subjects: all")
+        others = {mapping[w] for k, e in entries.items()
+                  if k != key and e["pool"] == pcfg["pool"] and "subjects" not in phases[k]
+                  for w in e["subjects"]}
+        have = {mapping[w] for w in entry["subjects"]}
+        new = [s for s in dict.fromkeys(pools[pcfg["pool"]]) if s not in have | others]
+        random.Random(f"{seed}:{pcfg['name']}:added").shuffle(new)   # blind ID order
+        ids = [f"{prefix}{i:0{width}d}" for i in range(counter, counter + len(new))]
+        counter += len(new)
+        mapping.update(zip(ids, new))
+        col = pcfg.get("balance_by")
+        info = infos[pcfg["pool"]]
+        groups = ({w: info.get(mapping[w], {}).get(col, "") for w in entry["subjects"] + ids}
+                  if col else None)
+        overlap = entry.get("overlap", [])
+        by_rater = add_new(entry["by_rater"], overlap, phase_raters(pcfg, raters), ids, groups)
+        entries[key] = entry | {"subjects": sorted(entry["subjects"] + ids),
+                                "by_rater": by_rater}
+        print(f"{key}: {len(ids)} subject(s) new to the pool list get new IDs "
+              f"{', '.join(ids) or '(none)'}; nothing else changes")
+        for r, v in by_rater.items():
+            add = [w for w in v if w in ids]
+            print(f"  {r}: +{len(add)} -> {len(v)} subjects ({len(v) - len(overlap)} own)"
+                  + (f", {dict(Counter(groups[w] for w in add))}" if groups and add else ""))
+
     locks = {}
     workspace = Path(args.workspace or paths["workspace_root"])
     changes = {}
-    for key in args.repartition:
+    for key in redivide:
         pcfg, entry = phases[key], entries[key]
         if not workspace.is_dir():
-            ap.error(f"--repartition checks the workspace for existing outputs, but "
-                     f"{workspace} does not exist; pass --workspace")
+            ap.error(f"{key}: dividing a phase checks the workspace for existing outputs, "
+                     f"but {workspace} does not exist; pass --workspace")
         folders = sorted({utils.phase_dirname(key, pcfg), utils.phase_dirname(kept[key], pcfg)})
         locks[key] = output_locks(workspace, folders, old["raters"], entry["subjects"])
         outside = sorted({r for rs in locks[key].values() for r in rs}
@@ -325,6 +484,47 @@ def main():
         if outside:
             ap.error(f"{key}: {', '.join(outside)} already have outputs here but are not "
                      "among the phase's raters")
+        n_outputs = sum(map(len, locks[key].values()))
+        for hold in args.hold:
+            r, _, wid = hold.partition(":")
+            if wid not in entry["by_rater"].get(r, []):
+                ap.error(f"--hold {hold}: {wid} is not assigned to {r} in {key}")
+            locks[key].setdefault(wid, set()).add(r)
+        for wid, rs in next_up(entry["by_rater"], entry.get("overlap", []), locks[key],
+                               args.hold_next).items():
+            locks[key].setdefault(wid, set()).update(rs)
+        if key in args.rebalance:
+            pool_name = pcfg["pool"]
+            if not set(entry["subjects"]) <= {w for w, s in mapping.items()
+                                              if s in pools[pool_name]}:
+                ap.error(f"{key}: subjects left the pool list; use --repartition")
+            members = {mapping[w]: w for w in entry["subjects"]}
+            stray = [s for s in pcfg.get("overlap_subjects", []) if s not in members]
+            if stray:
+                ap.error(f"{key}: overlap_subjects {', '.join(stray)} are not in this phase")
+            order = sorted(entry["subjects"])
+            random.Random(f"{seed}:{pcfg['name']}:rebalance").shuffle(order)
+            frac = float(pcfg.get("overlap", 0) or 0)
+            n_overlap = int(frac) if frac >= 1 else round(frac * len(order))
+            overlap = list(dict.fromkeys(list(entry.get("overlap", [])) +
+                                         [members[s] for s in pcfg.get("overlap_subjects", [])]))
+            col = pcfg.get("balance_by")
+            info = infos[pool_name]
+            groups = {w: info.get(mapping[w], {}).get(col, "") for w in order} if col else None
+            by_rater, overlap = rebalance(entry["by_rater"], overlap, phase_raters(pcfg, raters),
+                                          n_overlap, order,
+                                          eligible(pool_name, order, utils.phase_runs(pcfg)),
+                                          locks[key], groups,
+                                          [members[s] for s in pcfg.get("overlap_subjects", [])])
+            entries[key] = entry | {"by_rater": by_rater, "overlap": overlap}
+            print(f"{key}: checked {', '.join(folders)} under {workspace}; {n_outputs} "
+                  f"rater/subject pair(s) with outputs and "
+                  f"{sum(map(len, locks[key].values())) - n_outputs} held stay put")
+            for r in by_rater:
+                was, now = set(entry["by_rater"].get(r, [])), set(by_rater[r])
+                print(f"  {r}: {len(was)} -> {len(now)} subjects "
+                      f"(+{len(now - was)}, -{len(was - now)})")
+            continue
         subjects = list(entry["subjects"])
         if pcfg.get("n_subjects") == "all" and "subjects" not in pcfg:
             # "all" follows the pool list: keep the IDs of subjects still in it,
@@ -399,9 +599,19 @@ def main():
         moved = [w for w, s in before["mapping"].items() if mapping.get(w) != s]
         for key, old_key in kept.items():
             b, a = before["phases"][old_key], split["phases"][key]
-            if key in args.repartition:                 # subjects may follow the pool
+            if key in redivide:                         # subjects may follow the pool
                 moved += [f"{key} {r}/{w}" for w, rs in locks[key].items()
                           for r in rs if w not in a["by_rater"].get(r, [])]
+                if key in args.rebalance:                   # a dropped overlap ID stays with one rater
+                    moved += [f"{key} subject {w}" for w in b["subjects"]
+                              if not any(w in v for v in a["by_rater"].values())]
+            elif key in args.add_new:                   # only additions
+                moved += [f"{key} subject {w}" for w in b["subjects"] if w not in a["subjects"]]
+                moved += [f"{key} overlap" for _ in [0] if a.get("overlap") != b.get("overlap")]
+                moved += [f"{key} {r}/{w}" for r, v in b["by_rater"].items() for w in v
+                          if w not in a["by_rater"].get(r, [])]
+                moved += [f"{key} {r}/{w}" for r, v in a["by_rater"].items() for w in v
+                          if w in b["subjects"] and w not in b["by_rater"].get(r, [])]
             elif a["subjects"] != b["subjects"]:
                 moved.append(f"{key} subjects")
             elif any(a["by_rater"].get(r) != v for r, v in b["by_rater"].items()):
@@ -419,7 +629,9 @@ def main():
         if key not in kept:
             status = "new"
         else:
-            status = "repartitioned" if key in args.repartition else "kept"
+            status = ("repartitioned" if key in args.repartition else
+                      "rebalanced" if key in args.rebalance else
+                      "subjects added" if key in args.add_new else "kept")
             if kept[key] != key:
                 status += f", was {kept[key]}"
             if added and info["assignment"] == "shared":

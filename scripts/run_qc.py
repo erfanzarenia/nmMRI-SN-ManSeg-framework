@@ -18,6 +18,16 @@ rater's attempt-to-attempt reproducibility. <phase>/coverage.md shows who has
 which attempt for which scan and notes gaps, odd file names and set-aside masks;
 the metrics use whatever masks exist. With two or more phases, a pooled summary
 goes to <qc-root>/summary/.
+
+Unfilled masks: a mask saved before its holes were filled has "_unfilled" in its
+name (R4_mask_run_1_combo_unfilled.nii.gz). The QC above never uses those. They
+get a QC of their own, the same workflow and criteria, laid out the same way in
+<qc-root>/unfilled/ (its own README, phases, summary and archive/). It runs for
+every phase that has an _unfilled mask; when no phase has one, unfilled/ is left
+as it is. Archiving the usual QC never touches unfilled/. --masks picks one QC:
+
+    python scripts/run_qc.py --masks filled      # only the usual QC
+    python scripts/run_qc.py --masks unfilled    # only the _unfilled QC
 """
 from __future__ import annotations
 
@@ -36,20 +46,34 @@ import qc_report as qr
 import qc_visualize as qv
 
 
-def has_outputs(phase_dir, raters):
-    """True when any rater has a NIfTI file anywhere under outputs/ in a phase."""
+def has_outputs(phase_dir, raters, variant="filled"):
+    """True when any rater has a NIfTI file of the mask variant ("filled": any
+    file not named _unfilled; "unfilled": one named so) under outputs/ in a phase."""
+    want = variant == "unfilled"
     for r in raters:
         out = Path(phase_dir) / r / "outputs"
-        if out.is_dir() and any(p.is_file() for p in out.rglob("*.nii*")):
+        if out.is_dir() and any(p.is_file() and qa.is_unfilled(p.name) == want
+                                for p in out.rglob("*.nii*")):
             return True
     return False
 
 
+UNFILLED_DIR = "unfilled"    # <qc_root>/unfilled/: the QC of the _unfilled masks
+
+
+def variant_root(qc_root, variant):
+    """QC folder of a mask variant: qc_root itself for the usual (filled) masks,
+    <qc_root>/unfilled/ for the _unfilled ones."""
+    return Path(qc_root) if variant == "filled" else Path(qc_root) / UNFILLED_DIR
+
+
 def archive_previous(qc_root):
-    """Move everything in qc_root except archive/ into archive/<timestamp>/.
-    Returns that folder, or None when there was nothing to move."""
+    """Move everything in qc_root except archive/ (and the unfilled QC nested in
+    it, which archives itself) into archive/<timestamp>/. Returns that folder, or
+    None when there was nothing to move."""
     qc_root = Path(qc_root)
-    old = sorted(p for p in qc_root.iterdir() if p.name != "archive") if qc_root.is_dir() else []
+    keep = {"archive", UNFILLED_DIR}
+    old = sorted(p for p in qc_root.iterdir() if p.name not in keep) if qc_root.is_dir() else []
     if not old:
         return None
     dest = qc_root / "archive" / time.strftime("%Y%m%d-%H%M%S")
@@ -160,6 +184,9 @@ def main():
                     help="Override qc_output_root (default with --workspace: <workspace>/qc).")
     ap.add_argument("--label", type=int, default=1, help="Label value to measure (SN = 1).")
     ap.add_argument("--config-dir", type=Path, default=utils.CONFIG_DIR)
+    ap.add_argument("--masks", choices=("both", *qa.VARIANTS), default="both",
+                    help="Which QC to run: the usual masks (filled), the _unfilled "
+                         "ones (into <qc-root>/unfilled/), or both (default).")
     args = ap.parse_args()
 
     paths, phases, raters = utils.load_config(args.config_dir)
@@ -171,14 +198,35 @@ def main():
     unknown = [k for k in args.phases if k not in phases]
     if unknown:
         ap.error(f"unknown phase(s): {', '.join(unknown)}")
-    todo = args.phases or [k for k in utils.phase_keys(phases)
-                           if has_outputs(workspace / utils.phase_dirname(k, phases[k]), raters)]
-    if not todo:
-        print(f"No rater outputs under {workspace}; nothing to QC.")
-        return 1
     split_path = Path(args.config_dir) / "subjects_split.json"
     split = utils.load_json(split_path) if split_path.exists() else None
 
+    variants = qa.VARIANTS if args.masks == "both" else (args.masks,)
+    done = 0
+    for variant in variants:
+        todo = [k for k in args.phases or utils.phase_keys(phases)
+                if has_outputs(workspace / utils.phase_dirname(k, phases[k]), raters, variant)]
+        if variant == "filled" and args.phases:
+            todo = list(args.phases)
+        if not todo:
+            what = "rater outputs" if variant == "filled" else "_unfilled masks"
+            print(f"\nNo {what} under {workspace} for {', '.join(args.phases) or 'any phase'}; "
+                  f"no {variant} QC.")
+            continue
+        qa.set_variant(variant)
+        root = variant_root(qc_root, variant)
+        if variant != "filled":
+            print(f"\n#################### {variant} masks (_unfilled), into {root} "
+                  "####################")
+        run(todo, variant, root, workspace, phases, raters, paths, split, args.label)
+        done += 1
+    qa.set_variant("filled")
+    return 0 if done else 1
+
+
+def run(todo, variant, qc_root, workspace, phases, raters, paths, split, label):
+    """One complete QC (coverage, metrics, figures, reports, summary) of the
+    phases in `todo`, on the masks of `variant`, into qc_root."""
     archived = archive_previous(qc_root)
     if archived:
         print(f"Previous QC results moved to {archived}")
@@ -195,6 +243,13 @@ def main():
         for line in qr.coverage_report(ph, cov, qa.expected_attempts(pcfg),
                                        qc_root / ph / "coverage.md"):
             print(f"    {line}")
+        gate = qa.run_check(cov)
+        gate_lines, gate_note = qr.run_check_report(ph, gate, qc_root / ph / "coverage.md")
+        if gate_note:
+            gate.to_csv(qc_root / ph / "run_check.csv", index=False)
+        for line in gate_lines:
+            print(f"    {line}")
+        with_gate = (lambda note: f"{note}\n\n{gate_note}") if gate_note else (lambda note: note)
         attempts = qa.detect_attempts(phase_dir, raters)
         experts = qa.expert_masks(ph, workspace, phases, raters, paths, split)
         if experts:
@@ -205,8 +260,8 @@ def main():
         per, folders = [], []
         for n in attempts:
             tables, findings, path, nf, ns = process_attempt(
-                ph, n, workspace, phases, raters, qc_root, args.label,
-                qr.attempt_note(cov, f"a{n}"), experts)
+                ph, n, workspace, phases, raters, qc_root, label,
+                with_gate(qr.attempt_note(cov, f"a{n}")), experts)
             per.append(tables)
             folders.append(f"a{n}")
             rep_tables[ph], rep_findings[ph], rep_reports[ph] = tables, findings, path
@@ -214,10 +269,10 @@ def main():
                   f"{len(tables['rater_vs_rater_per_scan'])} rater-vs-rater rows; "
                   f"{nf} figures, {ns} slice montages")
         if len(attempts) > 1:
-            repro = qa.compute_attempt_reproducibility(ph, workspace, phases, raters, args.label)
+            repro = qa.compute_attempt_reproducibility(ph, workspace, phases, raters, label)
             avg, findings, path, nf = process_average(
-                ph, per, repro, qc_root, args.label,
-                qr.attempt_note(cov, None))
+                ph, per, repro, qc_root, label,
+                with_gate(qr.attempt_note(cov, None)))
             folders.append(qa.AVERAGE_DIR)
             rep_tables[ph], rep_findings[ph], rep_reports[ph] = avg, findings, path
             print(f"  [{qa.AVERAGE_DIR}] mean of {len(attempts)} attempts, {nf} figures, "
@@ -226,16 +281,21 @@ def main():
 
     pooled = [ph for ph in todo if ph in rep_tables]
     if len(pooled) > 1:
-        write_summary(pooled, rep_tables, rep_findings, rep_reports, qc_root, args.label)
-    _write_readme(qc_root, phase_folders, pooled if len(pooled) > 1 else [], archived)
+        write_summary(pooled, rep_tables, rep_findings, rep_reports, qc_root, label)
+    _write_readme(qc_root, phase_folders, pooled if len(pooled) > 1 else [], archived, variant)
     print(f"\nDone. QC results in {qc_root}")
-    return 0
 
 
-def _write_readme(qc_root, phase_folders, pooled, archived):
+def _write_readme(qc_root, phase_folders, pooled, archived, variant="filled"):
     """qc/README.md: what this run covers and where to start reading."""
     lines = [
-        "# QC outputs", "",
+        "# QC outputs" + (" (unfilled masks)" if variant == "unfilled" else ""), "",
+        ("This QC uses only the masks saved before hole filling, named `_unfilled`; "
+         "the usual QC of the filled masks is in the folder above and never uses them."
+         if variant == "unfilled" else
+         "Masks named `_unfilled` (saved before hole filling) are not used here; they "
+         f"have a QC of their own in `{UNFILLED_DIR}/`, laid out the same way, when any "
+         "exist. It keeps its own `archive/` and is left as it is when there are none."), "",
         f"Generated by `scripts/run_qc.py` on {time.strftime('%Y-%m-%d %H:%M')} for "
         f"{', '.join(phase_folders)}. Earlier runs are in `archive/`"
         + (f" (the one just before this is `archive/{archived.name}/`)." if archived else "."), "",
@@ -244,7 +304,7 @@ def _write_readme(qc_root, phase_folders, pooled, archived):
         "`<phase>/<attempt>/reports/`. Each attempt (`a1`, `a2`, ...) is analyzed on "
         "its own; `attempts_average/` is the mean of the per-attempt metrics for each "
         "scan/rater and holds the attempt-to-attempt reproducibility table.", "",
-        "```", "qc/",
+        "```", f"{Path(qc_root).name}/",
     ]
     full = "{metrics, plots, worst_slices, all_slices, reports}"
     for ph, folders in phase_folders.items():
@@ -257,6 +317,9 @@ def _write_readme(qc_root, phase_folders, pooled, archived):
                 lines.append(f"│   ├── {folder}/  {full}")
     if pooled:
         lines.append("├── summary/  pooled across " + ", ".join(pooled))
+    if variant == "filled":
+        lines.append(f"├── {UNFILLED_DIR}/  the same, for the _unfilled masks "
+                     "(only once any exist)")
     lines += ["└── archive/  earlier runs", "```", ""]
     (Path(qc_root) / "README.md").write_text("\n".join(lines))
 

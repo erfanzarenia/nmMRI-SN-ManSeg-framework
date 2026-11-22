@@ -27,11 +27,92 @@ qc/
     a2/  { … }                 # one folder per attempt found
     attempts_average/ { metrics, plots, reports } + metrics/attempts_reproducibility.csv
   summary/                     # pooled across phases, only when 2+ phases are run
+  unfilled/                    # the same layout for the _unfilled masks (see below)
   archive/<timestamp>/         # earlier runs
 ```
 
 Start with `<phase>/coverage.md`, then the reports in
 `<phase>/<attempt>/reports/`; each opens with a Methods note.
+
+## Unfilled masks
+
+Raters fill the holes in a mask before its final save, and first save it as it
+was with `_unfilled` at the end of the usual name (`R1_mask_a1_unfilled`,
+`R4_mask_run_1_combo_unfilled`; also read: `_Unfilled`, `-unfilled`,
+`_un-filled`, anywhere in the name). The two are kept entirely apart:
+
+- The usual QC in `qc/` never sees a file named `_unfilled`.
+- The unfilled masks get a QC of their own, with the same workflow and criteria
+  (coverage, run check, attempts, metrics, figures, protocol and calibration
+  verdicts, reports, summary), in `qc/unfilled/`, laid out exactly like `qc/`
+  with its own README, phases, summary and `archive/`. Archiving `qc/` at the
+  start of a run never moves `unfilled/`. Inside it each mask is read as if `_unfilled` were not
+  in its name, so the run, image and attempt rules below apply unchanged.
+- `run_qc.py` runs both, in that order. The unfilled QC covers every phase (of
+  those asked for) with at least one `_unfilled` mask, and is skipped, leaving
+  `qc/unfilled/` as it is, when there are none. `--masks filled` or `--masks
+  unfilled` runs only one of them.
+
+```bash
+python scripts/run_qc.py phase5 phase6                    # both QCs
+python scripts/run_qc.py phase6 --masks unfilled          # only qc/unfilled/
+```
+
+## Run check (gate)
+
+In a phase with `runs` (Phase 6), runs are segmented in order: run 1, then run 2,
+and so on. The raters of an overlap subject are then always comparable on the
+runs they share, even when some are further along. `run_qc.py` checks this for
+every subject and writes `<phase>/run_check.csv`, a "Run check" section at the
+end of `coverage.md`, a line in every report and the result on the console:
+
+- **FAIL**: on an overlap subject, a rater skipped a run (e.g. saved run 2 but no
+  run 1), so their runs do not line up with the other raters'. This is often a
+  mask saved under the wrong run number; ask the rater which image it was drawn on.
+  With `echoes` (Phase 6) it also fails when a rater segmented another image of a
+  run than the other raters (e.g. run 1 on `_echo` while the others used
+  `_combo`): masks are only compared on the same run and image, so that run cannot
+  be compared. Ask the rater to also segment the image the others used. Each line
+  lists the runs with their image, e.g. `run 1 combo, 2 echo`.
+- **Check**: a skipped run on a subject only that rater has, or on an overlap
+  subject where every rater skipped the same run (e.g. all have run 2 only), so
+  they still line up. Worth asking whether the run was skipped on purpose.
+
+A failing check does not stop QC. The metrics still run, so resolve the listed
+scans before the final analysis.
+
+## SN volume and extent
+
+Every report has an "SN volume and extent" section, from `metrics/volumes.csv`
+(per rater and scan: SN voxels, volume in mm³, and how many axial, coronal and
+sagittal slices the SN spans, also in mm):
+
+- per rater over all their scans (`volume_by_rater.csv`);
+- on the overlap scans (2+ raters): the average over those scans, each rater's
+  values on them (`volume_overlap_by_rater.csv`), and each scan across its raters
+  with the volume CV, SD / mean (`volume_overlap_by_scan.csv`,
+  `volume_overlap_summary.csv`).
+
+Each table gives mean, SD, min and max. A high CV or a wide range of axial slices
+on an overlap scan means the raters disagree on how far the SN extends.
+
+## Phase summary
+
+Each report's headline gives the **phase summary** first: the average of
+per-scan averages. Each metric is averaged within a scan first (over its rater
+pairs, or over its raters against the expert), then over the scans, so every
+scan counts once however many raters it has; `±` is the SD across scans. The
+grand mean over all pair-scans (or rater-scans) follows; the two agree while
+every scan has the same raters. `metrics/rvr_phase_summary.csv` (and
+`rve_phase_summary.csv`) hold both, one row each, told apart by the `summary`
+column (`average_of_scan_means`, `grand_mean`). With 2+ phases,
+`summary/overall_qc_report.md` lists the phase summary of each phase and of all
+of them together.
+
+**Medians:** every summary table also has a `<metric>_median` column next to
+`<metric>_mean` (in the metric CSVs). The reports show the two together as
+`mean (median)`, and the headlines add the median in parentheses. A median well
+off the mean points to a few scans or pairs pulling the mean.
 
 ## Attempts
 
@@ -52,6 +133,35 @@ rest. `coverage.md` shows, per rater and scan, the attempts found (`·` for none
 `*` for a scan with a note), a per-rater count against the attempts the phase
 expects, and the notes themselves. The same per-rater counts are printed while
 QC runs, and each report repeats the gaps for its attempt in one line.
+
+In a phase with `runs` (Phase 6), each acquisition is its own scan: tables,
+figures and coverage list `sub-0029_run_1` and `sub-0029_run_2` separately, and
+raters are compared run by run. With `echoes`, a run is offered as two images
+(`_combo`, `_echo`) and the rater segments one of them. Each image is then its own
+scan in the metrics (`sub-0029_run_1_combo`, `sub-0029_run_1_echo`): a mask is only
+compared with masks of the same run and the same image, never a combined-echo mask
+with an Echo 1 mask. Coverage keeps one row per run and names the image segmented
+(`a1 combo`), and the run check fails an overlap subject whose raters chose
+different images for a run.
+
+A mask counts for the run its name gives: the number after "run", with any
+separator or none and leading zeros allowed (`_run_2`, `_run2`, `_run-02`,
+`Run 2`, `_run.2`), or else the only number left once the attempt (`_a1`), Echo 1
+(`_echo1`) and subject ID (`sub-0029`) tokens are set aside (`R4_mask_2`,
+`R7_mask_a1_2`). A file with no such number, or with two different ones, is never
+assumed to be a run: it is not used, and coverage notes it as "not used, no run in
+the name". The image label is read from `_combo` (also `_comb`, `_combined`) or
+`_echo` (also `_echo1`, `_echo-1`), with any separator and in any case. Raters
+must name both the run and the image: a mask without an image label is not used,
+and coverage notes it as "not used, no image (_combo or _echo) in the name". A
+rater who saved both images of one run has a mask on each image's scan. Masks saved before runs were added have a
+`<INIT>_mask_run_1_combo` symlink next to them; that symlink is the run 1 mask, and
+the file it points to is counted once. Runs of a subject usually share one image
+grid, so the grid check below cannot catch a mask saved under the wrong run: only
+its name says which run it is. A file whose name is not `.nii` or `.nii.gz` (e.g.
+`R7_mask_run_2_echo2nii.gz`) is not read at all and is noted as "not used, not a
+.nii.gz file name". A run number right before the image label (`_run_1combo`)
+counts as a separator.
 
 How masks are found in `outputs/<sub>/`:
 
@@ -148,8 +258,8 @@ python scripts/qc_protocol.py --phase phase5 --latest
 ```
 
 Calibration scans also keep their production assignment, under other workspace
-IDs; sub-1093 and sub-5064 are production overlap subjects as well, so every
-rater segments them again in Phase 6. The production masks are the ones used for
+IDs; those also listed in `overlap_subjects` are production overlap subjects as
+well, so every rater segments them again in Phase 6. The production masks are the ones used for
 analysis.
 
 ## Quick checks

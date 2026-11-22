@@ -11,6 +11,7 @@ run with only PyYAML installed.
 from __future__ import annotations
 
 import json
+import os
 import re
 from glob import glob
 from pathlib import Path
@@ -18,7 +19,13 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = REPO_ROOT / "config"
+# A group's own config (paths, raters, phases, subject lists, the private split
+# key and lists) lives in config/local/, which git ignores; config/ holds the
+# tracked example. config/local/ is used whenever it has a paths.yaml, and
+# MANSEG_CONFIG_DIR or --config-dir points elsewhere.
+_LOCAL = REPO_ROOT / "config" / "local"
+CONFIG_DIR = Path(os.environ.get("MANSEG_CONFIG_DIR")
+                  or (_LOCAL if (_LOCAL / "paths.yaml").is_file() else REPO_ROOT / "config"))
 
 _PHASE_RE = re.compile(r"^phase(\d+)$")
 
@@ -91,26 +98,119 @@ def phase_labels(pcfg):
 # Workspace layout built by make_workspace.py (same for every phase):
 #   <ws>/<phaseN_name>/<rater>/inputs/<sub>/image.nii.gz [+ expert_mask.nii.gz]
 #   <ws>/<phaseN_name>/<rater>/outputs/<sub>/   (rater saves masks here)
+# A phase with `runs` in phases.yaml holds one image per acquisition instead:
+#   inputs/<sub>/image_run_<N>.nii.gz, outputs/<sub>/<rater>_mask_run_<N>.nii.gz
+# and a phase with `echoes` too offers each run as more than one image, the name
+# ending in the echo label (image_run_1_combo, image_run_1_echo). The rater
+# segments one of them per run, whichever shows the SN best, and says which in
+# the mask name (<rater>_mask_run_1_combo). QC uses a mask only for the run and
+# image in its name; one naming no run or no image is flagged and not used. Masks
+# saved before runs existed have a <rater>_mask_run_1_combo symlink naming them.
+#
+# A "scan" is what gets segmented and compared: the subject (sub-0001) in a
+# single-image phase, the subject and run (sub-0001_run_2) in a multi-run phase,
+# and with echo images the run and image too (sub-0001_run_2_echo). Masks are only
+# ever compared on the same scan. The path helpers below accept any of them.
+_SCAN_RE = re.compile(r"^(.*?)_run_(\d+)(?:_([a-z]+))?$")
+RUN_IMAGE_RE = re.compile(r"^image_run_(\d+)(?:_([a-z]+))?\.nii(\.gz)?$")
+
+
 def phase_dirname(key, pcfg):
     return f"{key}_{pcfg['name']}"
 
 
-def input_dir(phase_dir, rater, subject):
-    return Path(phase_dir) / rater / "inputs" / subject
+def phase_runs(pcfg, subject=None):
+    """Runs a phase segments per subject, or None when it uses a single image.
+    Given a source subject ID, honors the phase's `run1_only` list."""
+    if subject in pcfg.get("run1_only", []):
+        return [1]
+    return pcfg.get("runs")
 
 
-def output_dir(phase_dir, rater, subject):
-    return Path(phase_dir) / rater / "outputs" / subject
+def phase_echoes(pcfg):
+    """Echo images a multi-run phase holds per run (e.g. [combo, echo]), or None."""
+    return pcfg.get("echoes")
+
+
+def split_scan(scan):
+    """(subject, run) of a scan ID; run is None for a plain subject ID."""
+    m = _SCAN_RE.match(scan)
+    return (m.group(1), int(m.group(2))) if m else (scan, None)
+
+
+def scan_echo(scan):
+    """Echo label of a scan ID (sub-0001_run_1_echo -> "echo"), or None."""
+    m = _SCAN_RE.match(scan)
+    return m.group(3) if m else None
+
+
+def input_dir(phase_dir, rater, scan):
+    return Path(phase_dir) / rater / "inputs" / split_scan(scan)[0]
+
+
+def output_dir(phase_dir, rater, scan):
+    return Path(phase_dir) / rater / "outputs" / split_scan(scan)[0]
+
+
+def image_name(run=None, echo=None):
+    """Input image file name stem for a run and echo image (None: the
+    single-image name)."""
+    if run is None:
+        return "image"
+    return f"image_run_{run}" + (f"_{echo}" if echo else "")
+
+
+def scan_image_name(scan):
+    """Input image file name stem of a scan ID."""
+    return image_name(split_scan(scan)[1], scan_echo(scan))
+
+
+def scan_image(subject_dir, scan):
+    """A scan's input image in one subject's inputs/ folder, or None if absent. A
+    run offered as several images gives the first by name (image_run_1_combo
+    before image_run_1_echo); they share one image grid."""
+    subject_dir = Path(subject_dir)
+    found = resolve(subject_dir / f"{scan_image_name(scan)}.nii.gz")
+    _, run = split_scan(scan)
+    if found is not None or run is None or scan_echo(scan):
+        return found
+    return next((p for p in sorted(subject_dir.glob(f"image_run_{run}_*.nii*"))
+                 if RUN_IMAGE_RE.match(p.name)), None)
+
+
+def input_image(phase_dir, rater, scan):
+    """Path of a scan's input image in a rater's inputs/, or None if absent."""
+    return scan_image(input_dir(phase_dir, rater, scan), scan)
+
+
+def subject_scans(subject_dir):
+    """Scan IDs of one subject's inputs/ folder: one per image_run_<N>[_<echo>]
+    file (sub-0001_run_1_combo, sub-0001_run_1_echo), or just the subject when the
+    folder has none (a single-image phase)."""
+    subject_dir = Path(subject_dir)
+    found = sorted({(int(m.group(1)), m.group(2) or "") for m in map(RUN_IMAGE_RE.match, (
+        p.name for p in subject_dir.iterdir())) if m}) if subject_dir.is_dir() else []
+    return ([f"{subject_dir.name}_run_{r}" + (f"_{e}" if e else "") for r, e in found]
+            or [subject_dir.name])
+
+
+def run_scan(scan):
+    """The run of a scan, without its echo label (sub-0001_run_1_echo ->
+    sub-0001_run_1); a scan with no run is returned as is."""
+    sub, run = split_scan(scan)
+    return scan if run is None else f"{sub}_run_{run}"
 
 
 def find_subjects(phase_dir, raters):
-    """All sub-* directories present under any rater's inputs/ folder."""
+    """All scans under any rater's inputs/ folder: the sub-* directories, split
+    by run where they hold one image per run."""
     found = set()
     for rater in raters:
         search = Path(phase_dir) / rater / "inputs"
         if search.is_dir():
-            found.update(p.name for p in search.iterdir()
-                         if p.is_dir() and p.name.startswith("sub-"))
+            for p in search.iterdir():
+                if p.is_dir() and p.name.startswith("sub-"):
+                    found.update(subject_scans(p))
     return sorted(found)
 
 
@@ -141,18 +241,21 @@ def pool_patterns(pdef):
     return image, pdef.get("expert_mask_pattern", defaults.get("expert_mask_pattern"))
 
 
-def source_paths(pdef, subject):
+def source_paths(pdef, subject, run=None, echo=None):
     """(image, expert_mask or None) source paths for one subject of a pool.
-    Patterns are filled with the subject and the pool's own keys (e.g. run).
-    image_pattern may be a list: each pattern is tried in every data root
+    Patterns are filled with the subject and the pool's own keys (e.g. run;
+    `run` given here replaces the pool's default). An `echo` listed in the pool's
+    echo_patterns takes its image from there; any other (e.g. combo) uses
+    image_pattern. image_pattern may be a list: each pattern is tried in every data root
     before the next pattern (fallbacks, e.g. an older file name for the same
     image). The first existing image wins; if none exists, the first pattern
     under the first root is returned (and reported missing)."""
     roots = pdef["data_root"]
     roots = [roots] if isinstance(roots, str) else roots
     image_pats, expert_pat = pool_patterns(pdef)
+    image_pats = (pdef.get("echo_patterns") or {}).get(echo, image_pats)
     image_pats = [image_pats] if isinstance(image_pats, str) else image_pats
-    fields = {**pdef, "subject": subject}
+    fields = {**pdef, "subject": subject} | ({} if run is None else {"run": run})
     images = [Path(r) / p.format(**fields) for p in image_pats for r in roots]
     image = next((i for i in images if resolve(i)), images[0])
     root = next(Path(r) for r in roots if image.is_relative_to(r))

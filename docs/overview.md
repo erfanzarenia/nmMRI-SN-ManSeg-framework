@@ -26,7 +26,7 @@ phase 6 scales.
 | 3     | Mock exam        | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
 | 4     | Exam             | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
 | 5     | SNIT calibration | study   | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 6     | Production       | study   | no          | SN + CP | `<INIT>_mask`       | partitioned |
+| 6     | Production       | study   | no          | SN + CP | `<INIT>_mask_run_N_combo`, `_echo` | partitioned |
 
 - **shared**: every rater segments the same subjects (enables inter-rater
   comparison).
@@ -34,7 +34,8 @@ phase 6 scales.
   segmented once), with a hidden overlap kept for reliability (see Phase 6).
 - **labeled** vs **study**: two disjoint subject pools that live in different
   places. The labeled (training) set has expert masks and Echo 1 images; the
-  SNIT study set has no expert masks and combined-echo images. Each is a *pool*
+  SNIT study set has no expert masks and combined-echo images (plus Echo 1 in
+  Phase 6). Each is a *pool*
   in [`config/paths.yaml`](../config/paths.yaml).
 - **SN / CP**: label 1 = substantia nigra; label 2 = cerebral peduncle, a
   reference region added from Phase 3 (Phases 1–2 are SN-only). One mask file
@@ -56,6 +57,11 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
   in the expert-guided phases). Rater outputs are `<INIT>_mask.nii.gz` (single
   attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts), each
   holding every label of the phase.
+- Phase 6 has two images per NM acquisition (run 1, for most subjects run 2, for a
+  few also run 3): the combined echoes, `image_run_N_combo.nii.gz`, and Echo 1,
+  `image_run_N_echo.nii.gz`. Each run is segmented once, on whichever image shows
+  the SN better: `<INIT>_mask_run_N_combo.nii.gz` or `<INIT>_mask_run_N_echo.nii.gz`.
+  The `_run_N_combo` / `_run_N_echo` ending is required. See [phase6.md](phase6.md).
 - The source dataset may be BIDS-style or a single flat folder, with `.nii` or
   `.nii.gz` files (set `layout` per pool in
   [`config/paths.yaml`](../config/paths.yaml)); every workspace input is
@@ -77,6 +83,7 @@ identically for every phase, and copies the rater-facing guides into a shared
   <phaseN_name>/
     <RATER>/
       inputs/<sub-XXXX>/image.nii.gz [+ expert_mask.nii.gz]
+                                   # Phase 6: image_run_1_combo.nii.gz, image_run_1_echo.nii.gz, ...
       outputs/<sub-XXXX>/          # rater saves masks here
 ```
 

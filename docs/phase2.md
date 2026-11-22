@@ -37,7 +37,12 @@ Two independent attempts per subject:
 ```
 outputs/<sub-XXXX>/<INIT>_mask_a1.nii.gz
 outputs/<sub-XXXX>/<INIT>_mask_a2.nii.gz
+outputs/<sub-XXXX>/<INIT>_mask_a1_unfilled.nii.gz   # before filling holes
+outputs/<sub-XXXX>/<INIT>_mask_a2_unfilled.nii.gz   # before filling holes
 ```
+
+Each mask also has its unfilled copy, saved before the holes are filled, with
+`_unfilled` at the end of the name (see [itksnap_instructions.md](itksnap_instructions.md#save-the-mask)).
 
 All first attempts (`_a1`) are completed across subjects, then the second
 attempts (`_a2`) later. This reduces immediate recall bias and gives a better

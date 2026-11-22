@@ -35,12 +35,22 @@ from matplotlib.lines import Line2D
 import utils
 import qc_analysis as qa
 
-# Consistent identity colors across every figure.
-RATER_COLORS = {"R1": "#1f77b4", "R2": "#2ca02c", "R3": "#d62728",
-                "R4": "#17becf", "R5": "#9467bd", "R6": "#8c564b", "R7": "#e377c2",
-                "R8": "#bcbd22"}
-PAIR_COLORS = {"R1-R2": "#9467bd", "R1-R3": "#8c564b", "R3-R2": "#e377c2",
-               "R2-R3": "#e377c2"}
+# Consistent identity colors across every figure: "colors" (rater -> color) and
+# "pair_colors" ("A-B" -> color) in raters.json, when given; any other rater
+# takes a tab10 color by its place in the rater list.
+def _config_colors():
+    try:
+        cfg = utils.load_json(utils.CONFIG_DIR / "raters.json")
+    except (OSError, ValueError):
+        cfg = {}
+    tab = [matplotlib.colors.to_hex(c) for c in plt.get_cmap("tab10").colors]
+    fixed = dict(cfg.get("colors", {}))
+    for i, r in enumerate(cfg.get("raters", [])):
+        fixed.setdefault(r, tab[i % len(tab)])
+    return fixed, dict(cfg.get("pair_colors", {}))
+
+
+RATER_COLORS, PAIR_COLORS = _config_colors()
 MEAN_COLOR = "#111111"
 RATER_OVERLAY = RATER_COLORS                     # contour color per rater in montages
 EXPERT_COLOR = "#ffb000"
@@ -340,8 +350,7 @@ def _iter_scan_rater(phase_key, workspace, phases, raters, rve_df, label, attemp
         experts = qa.expert_masks(phase_key, workspace, phases, raters)
     lut = {(r["subject"], r["rater"]): r for _, r in rve_df.iterrows()}
     for sub in sorted(rve_df["subject"].unique()):
-        ip = next((p for p in (utils.resolve(utils.input_dir(phase_dir, r, sub) / "image.nii.gz")
-                               for r in raters) if p), None)
+        ip = next((p for p in (utils.input_image(phase_dir, r, sub) for r in raters) if p), None)
         if sub not in experts or ip is None:
             continue
         edata, _, spacing = utils.load_mask(experts[sub])

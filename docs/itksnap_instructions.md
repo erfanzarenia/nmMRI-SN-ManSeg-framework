@@ -10,15 +10,16 @@ From a terminal on the server: `itksnap`.
 
 ## Open an image
 
-`File → Open Main Image`, select `image.nii.gz`, then `Open`. The scan appears in
-axial, sagittal, and coronal views.
+`File → Open Main Image`, select `image.nii.gz` (Phase 6: for each run, either
+`image_run_<N>_combo.nii.gz` or `image_run_<N>_echo.nii.gz`), then `Open`. The scan appears in axial,
+sagittal, and coronal views.
 
 ## Adjust visibility
 
 `Tools → Image Contrast` adjusts brightness/contrast until the SN is clearly
 visible without washing out the background. Settings are kept consistent across slices within a subject.
-SNIT images (Phases 5–6) combine echoes, so their contrast is set afresh rather
-than reused from Echo 1 images.
+SNIT `_combo` images (Phases 5–6) combine echoes, so their contrast is set afresh
+rather than reused from Echo 1 images (`_echo` in Phase 6, and Phases 1–4).
 
 ## Overlay the expert mask (phases 1–2 only)
 
@@ -53,10 +54,21 @@ slider and visibility toggle control how it is shown.
 `Segmentation → Save As`, into the subject's `outputs/<sub>/` folder, named with
 the rater's initials. One file holds every label (SN, and CP from Phase 3):
 
-- Phases 3–6 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
+- Phases 3–5 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
   A Phase 5 re-segmentation, when requested, is **`<INITIALS>_mask_a2.nii.gz`**.
+- Phase 6 (one mask per run): always end the name with **`_run_<N>_<image>`**,
+  copied from the image the mask was drawn on: `image_run_1_combo.nii.gz` gives
+  **`<INITIALS>_mask_run_1_combo.nii.gz`**, `image_run_1_echo.nii.gz` gives
+  **`<INITIALS>_mask_run_1_echo.nii.gz`** (see [phase6.md](phase6.md)).
 - Phases 1–2 (two attempts): **`<INITIALS>_mask_a1.nii.gz`** then
   **`<INITIALS>_mask_a2.nii.gz`** (see [phase2.md](phase2.md)).
+
+**Unfilled copy (every phase).** Before filling holes in the mask, save it once
+as it is, with **`_unfilled`** added to the end of the usual name:
+`R1_mask_unfilled.nii.gz`, `R1_mask_a1_unfilled.nii.gz`,
+`R4_mask_run_1_combo_unfilled.nii.gz`. Then fill the holes and save the mask under
+its usual name, without `_unfilled`. Both files stay in `outputs/<sub>/`. The
+unfilled copy is checked on its own and never replaces the filled mask.
 
 ## Tips
 
@@ -68,6 +80,10 @@ the rater's initials. One file holds every label (SN, and CP from Phase 3):
 
 - Forgetting to create a new segmentation (and editing the expert mask).
 - Saving in the wrong directory or with the wrong filename.
+- Saving the filled mask with `_unfilled` in its name, or filling the holes before
+  saving the unfilled copy.
+- Phase 6: leaving `_run_<N>` or `_combo`/`_echo` off the mask name (QC does not
+  use such a mask), or copying them from a different image.
 - Inconsistent boundaries across slices.
 - Drawing with the wrong active label, or CP painted over SN.
 

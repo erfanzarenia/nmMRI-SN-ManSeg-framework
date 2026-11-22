@@ -15,6 +15,23 @@ token), each with a flag. Copies of the inputs, leftovers, empty masks and masks
 that are not on the scan's image grid (e.g. saved into the wrong subject folder)
 are set aside, also with a flag.
 
+Run-aware: in a multi-run phase each acquisition is its own scan (sub-0001_run_2),
+with its own row in every table and its own image grid. With `echoes` a run is
+offered as more than one image (combo, echo) and each image is its own scan
+(sub-0001_run_2_echo): masks are only compared with masks of the same run and
+image. A mask counts for the run its name gives: the number after "run" with any
+separator or none (run_2, run-02, Run 2, run2), else the one number left once the
+attempt (a1), echo (echo1) and subject (sub-0029) tokens are set aside
+(R4_mask_2). It counts for the image its name gives (_combo or _echo, any
+separator). A file naming no run, several runs or no image is flagged and not
+used. A <rater>_mask_run_1_combo symlink to an older mask is that mask, once.
+
+Fill-aware: a rater may also save the mask as it was before its holes were
+filled, with "_unfilled" in the name (R4_mask_run_1_combo_unfilled). Those masks
+get a QC of their own: set_variant("unfilled") makes every lookup here use only
+them, read as if the token were not there, while the default ("filled") ignores
+them. run_qc.py runs both, into separate folders.
+
 Attempt-aware: the attempts present (a1, a2, ...) are detected from the file
 names and each is analyzed on its own; raters or scans without an attempt simply
 do not contribute to it. The "attempts-average" is the mean of the per-attempt
@@ -43,21 +60,107 @@ import utils
 # Surface-distance columns carried through every table, in display order.
 SD_METRICS = ["dice", "jaccard", "hd", "hd95", "assd"]
 _TOKEN_RE = re.compile(r"(?:^|_)a(\d+|i)(?=_|$)", re.IGNORECASE)   # _a1, _A2, _ai (a1 typo)
+_RUN_RE = re.compile(r"[\W_]*run[\W_]*(\d+)", re.IGNORECASE)   # run_2, run-02, Run 2, run2
+# Tokens whose digits are not a run: an attempt (_a1), Echo 1 (echo1, echo-1) and a
+# subject ID (sub-0029). A bare number left after them is the run (R4_mask_2).
+_NOT_RUN_RE = re.compile(r"(?:^|[\W_])(?:a(?:\d+|i)|echo[\W_]*1?|sub[\W_]*\d+)(?![^\W_])",
+                         re.IGNORECASE)
+_NUM_RE = re.compile(r"[\W_]*(?<!\d)(\d+)(?!\d)")
+# _combo, also _comb/_combined; _echo, also _echo1/_echo-1 (Echo 1)
+# (run_1combo: a run number right before it counts as a separator)
+_ECHO_RE = re.compile(r"(?:^|[\W_]|(?<=\d))(comb(?:o|ined)?|echo(?:[\W_]?1)?)(?![^\W_])",
+                      re.IGNORECASE)
+# A file meant as a mask whose name is not .nii/.nii.gz (R7_mask_run_2_echo2nii.gz)
+_ALMOST_NIFTI_RE = re.compile(r"nii|\.gz$", re.IGNORECASE)
 _NIFTI_RE = re.compile(r"\.nii(\.gz)?$", re.IGNORECASE)
 _INPUT_COPIES = {"image", "expert_mask"}
+# _unfilled, also _un-filled, _Unfilled: the mask saved before its holes were filled
+_UNFILLED_RE = re.compile(r"[\W_]*un[\W_]?filled(?![^\W_])", re.IGNORECASE)
+VARIANTS = ("filled", "unfilled")
+MASK_VARIANT = "filled"          # which masks every lookup uses; see set_variant
+
+
+def set_variant(variant):
+    """Use only the "unfilled" masks (named _unfilled) from now on, or only the
+    others ("filled", the default). Each variant is a QC of its own."""
+    global MASK_VARIANT
+    if variant not in VARIANTS:
+        raise ValueError(f"unknown mask variant {variant!r}; use one of {VARIANTS}")
+    MASK_VARIANT = variant
+
+
+def is_unfilled(name):
+    """True when a file name marks the mask saved before hole filling."""
+    return _UNFILLED_RE.search(_NIFTI_RE.sub("", name)) is not None
+
+
+def _of_variant(files):
+    """The files of the current mask variant (see set_variant)."""
+    want = MASK_VARIANT == "unfilled"
+    return [p for p in files if is_unfilled(p.name) == want]
+
+
+def _run_match(stem):
+    """The run token of a file stem: the number after "run", else the only
+    number not in an attempt, echo or subject token. None when there is no
+    such number, or more than one distinct."""
+    m = _RUN_RE.search(stem)
+    if m:
+        return m
+    masked = _NOT_RUN_RE.sub(lambda t: "x" * len(t.group(0)), stem)   # same length
+    nums = list(_NUM_RE.finditer(masked))
+    return nums[0] if len({int(n.group(1)) for n in nums}) == 1 else None
 
 
 def _stem(name):
-    return _NIFTI_RE.sub("", name)
+    stem = _UNFILLED_RE.sub("", _NIFTI_RE.sub("", name))
+    m = _run_match(stem)
+    if m:
+        stem = stem[:m.start()] + stem[m.end():]
+    return _ECHO_RE.sub("", stem)
 
 
 def _standard(name, rater):
-    return re.fullmatch(rf"{re.escape(rater)}_mask(_a\d+)?\.nii(\.gz)?", name) is not None
+    return re.fullmatch(rf"{re.escape(rater)}_mask(_run_\d+)?(_a\d+)?(_combo|_echo)?"
+                        r"(_unfilled)?\.nii(\.gz)?", name) is not None
+
+
+def _run_of(p):
+    """Run number named in a file name (see _run_match), or None."""
+    m = _run_match(_NIFTI_RE.sub("", p.name))
+    return int(m.group(1)) if m else None
+
+
+def _echo_of(p):
+    """Echo label named in a file name ("combo" or "echo"), or None."""
+    m = _ECHO_RE.search(_NIFTI_RE.sub("", p.name))
+    return None if not m else "combo" if m.group(1).lower().startswith("comb") else "echo"
+
+
+def _of_run(files, run):
+    """The masks of one run among a subject's NIfTI files, and the files naming no
+    run. Only a mask whose name gives the run (see _run_match) is used for it; a
+    file with no run in its name is never assumed to be any run. Files that are
+    the same file as a run-named one (an older mask has a run 1 label symlinked
+    to it) are dropped from both lists."""
+    named = {p.resolve() for p in files if _run_of(p) is not None}
+    kept, seen = [], set()
+    for p in files:
+        if _run_of(p) == run and p.resolve() not in seen:
+            seen.add(p.resolve())
+            kept.append(p)
+    unnamed = [p for p in files if _run_of(p) is None and p.resolve() not in named
+               and _stem(p.name).lower() not in _INPUT_COPIES]
+    return sorted(kept), sorted(unnamed)
 
 
 # ----------------------------- mask discovery ----------------------------
-def find_rater_attempts(out_dir, rater):
-    """Find a rater's mask for each attempt in one subject's outputs folder.
+def find_rater_attempts(out_dir, rater, run=None, echo=None):
+    """Find a rater's mask for each attempt in one subject's outputs folder (of
+    one `run` in a multi-run phase: only masks naming that run, see _of_run; the
+    others with no run in the name are flagged, not used). With `echo` (the
+    run's image, e.g. "combo"), only masks naming that image are used; a mask of
+    the run naming no image is flagged and not used.
 
     Standard names are <rater>_mask_a<N>.nii.gz, or <rater>_mask.nii.gz (a1) in
     single-attempt phases. Other names are used when their meaning is clear, each
@@ -65,12 +168,30 @@ def find_rater_attempts(out_dir, rater):
     as the a1 typo, and a lone mask with no attempt token counts as a1. Copies of
     the inputs and leftover files are ignored, also with a flag.
 
+    Only masks of the current variant are looked at (see set_variant): by default
+    a file named _unfilled is not seen, and in the "unfilled" QC only those are.
+
     Returns {"attempts": {N: Path}, "files": [all NIfTI files], "flags": [notes]}.
     """
     out_dir = Path(out_dir)
-    files = sorted(p for p in out_dir.iterdir()
-                   if p.is_file() and _NIFTI_RE.search(p.name)) if out_dir.is_dir() else []
+    found = _of_variant(sorted(p for p in out_dir.iterdir() if p.is_file())
+                        if out_dir.is_dir() else [])
+    files = [p for p in found if _NIFTI_RE.search(p.name)]
     attempts, untagged, flags = {}, [], []
+    odd = [p.name for p in found if p not in files and _ALMOST_NIFTI_RE.search(p.name)]
+    if odd:
+        flags.append("not used, not a .nii.gz file name: " + ", ".join(odd))
+    if run is not None:
+        files, unnamed = _of_run(files, run)
+        if unnamed:
+            flags.append("not used, no run in the name: " + ", ".join(p.name for p in unnamed))
+        if echo:
+            unlabeled = [p.name for p in files if _echo_of(p) is None
+                         and _stem(p.name).lower() not in _INPUT_COPIES]
+            if unlabeled:
+                flags.append("not used, no image (_combo or _echo) in the name: "
+                             + ", ".join(unlabeled))
+            files = [p for p in files if _echo_of(p) == echo]
     for p in files:
         stem = _stem(p.name)
         if stem.lower() in _INPUT_COPIES:
@@ -108,7 +229,7 @@ def stray_files(phase_dir, rater):
     """NIfTI files saved directly in a rater's outputs/ folder, outside any
     subject folder. The analysis ignores them."""
     base = Path(phase_dir) / rater / "outputs"
-    return sorted(p.name for p in base.iterdir()
+    return sorted(p.name for p in _of_variant(base.iterdir())
                   if p.is_file() and _NIFTI_RE.search(p.name)) if base.is_dir() else []
 
 
@@ -129,9 +250,10 @@ def _input_grids(inputs_dir):
     grids = {}
     base = Path(inputs_dir)
     for sub in sorted(base.iterdir()) if base.is_dir() else []:
-        img = utils.resolve(sub / "image.nii.gz")
-        if img is not None:
-            grids[sub.name] = _grid(img)
+        for scan in utils.subject_scans(sub):
+            img = utils.scan_image(sub, scan)
+            if img is not None:
+                grids[scan] = _grid(img)
     return grids
 
 
@@ -181,7 +303,9 @@ def expert_masks(phase_key, workspace, phases, raters, paths=None, split=None):
 def rater_attempts(phase_dir, rater, sub):
     """find_rater_attempts for one subject, minus masks that are not on the
     subject's image grid (each set aside with a flag)."""
-    info = find_rater_attempts(utils.output_dir(phase_dir, rater, sub), rater)
+    _, run = utils.split_scan(sub)
+    info = find_rater_attempts(utils.output_dir(phase_dir, rater, sub), rater, run,
+                               utils.scan_echo(sub))
     grids = _input_grids(str(Path(phase_dir) / rater / "inputs"))
     for n, p in list(info["attempts"].items()):
         problem = grid_problem(p, sub, grids)
@@ -211,6 +335,26 @@ def detect_attempts(phase_dir, raters):
                 if sub_out.is_dir():
                     found |= set(find_rater_attempts(sub_out, r)["attempts"])
     return sorted(found)
+
+
+def extent(mask, affine, zooms):
+    """Slices a mask spans along each anatomical direction: axial (inferior-superior),
+    coronal (anterior-posterior), sagittal (left-right), as counts and in mm."""
+    import nibabel as nib
+    codes = nib.aff2axcodes(affine)
+    names = {"S": "axial", "I": "axial", "A": "coronal", "P": "coronal",
+             "L": "sagittal", "R": "sagittal"}
+    out = {}
+    for ax, code in enumerate(codes):
+        other = tuple(a for a in range(3) if a != ax)
+        n = int(np.count_nonzero(mask.any(axis=other)))
+        out[f"{names[code]}_slices"] = n
+        out[f"{names[code]}_mm"] = n * float(zooms[ax])
+    return out
+
+
+def _affine(path):
+    return _grid(path)[1]
 
 
 def load_bin(path, label):
@@ -283,13 +427,15 @@ def compute_phase(phase_key, workspace, phases, raters, attempt, label=1,
             vox = float(np.prod(zooms))
             vol_rows.append({"phase": phase_key, "attempt": att, "subject": sub,
                              "source": r, "n_vox": int(mask.sum()),
-                             "vol_mm3": int(mask.sum()) * vox})
+                             "vol_mm3": int(mask.sum()) * vox,
+                             **extent(mask, _affine(info["attempts"][attempt]), zooms)})
 
         if expert is not None:
             vox = float(np.prod(espace))
             vol_rows.append({"phase": phase_key, "attempt": att, "subject": sub,
                              "source": "expert", "n_vox": int(expert.sum()),
-                             "vol_mm3": int(expert.sum()) * vox})
+                             "vol_mm3": int(expert.sum()) * vox,
+                             **extent(expert, _affine(experts[sub]), espace)})
             for r, m in masks.items():
                 sdm = utils.surface_distance_metrics(m, expert, spacing)
                 rve_rows.append({
@@ -361,11 +507,13 @@ def expected_attempts(pcfg):
 def coverage(phase_key, workspace, phases, raters, split=None):
     """Who has which attempt for which scan in one phase.
 
-    One row per rater x assigned subject (the split's assignment when given,
-    else the subjects in the rater's inputs/): the attempts found, the expected
-    ones missing, any beyond the phase's `attempts`, the files used and every
-    discovery flag; plus a row per rater with files saved outside the subject
-    folders. Gaps are reported, never fatal: the metrics use whatever exists."""
+    One row per rater x assigned scan (the split's assignment when given, else
+    the subjects in the rater's inputs/; each run is a scan in a multi-run phase,
+    and a run offered as several images is one row whose `image` column names the
+    images segmented): the attempts found, the expected ones missing, any beyond
+    the phase's `attempts`, the files used and every discovery flag; plus a row
+    per rater with files saved outside the subject folders. Gaps are reported,
+    never fatal: the metrics use whatever exists."""
     pcfg = phases[phase_key]
     phase_dir = Path(workspace) / utils.phase_dirname(phase_key, pcfg)
     expected = expected_attempts(pcfg)
@@ -376,22 +524,90 @@ def coverage(phase_key, workspace, phases, raters, split=None):
         if subs is None:
             inputs = phase_dir / r / "inputs"
             subs = sorted(p.name for p in inputs.iterdir() if p.is_dir()) if inputs.is_dir() else []
+        runs = {}                                    # run -> its scans (one per image)
         for sub in subs:
-            info = rater_attempts(phase_dir, r, sub)
-            found = [f"a{n}" for n in info["attempts"]]
-            rows.append({"phase": phase_key, "rater": r, "subject": sub,
+            for s in utils.subject_scans(phase_dir / r / "inputs" / sub):
+                runs.setdefault(utils.run_scan(s), []).append(s)
+        for run, scans in runs.items():
+            nums, images, files, flags = set(), [], [], []
+            for sub in scans:
+                info = rater_attempts(phase_dir, r, sub)
+                nums |= set(info["attempts"])
+                if info["attempts"] and utils.scan_echo(sub):
+                    images.append(utils.scan_echo(sub))
+                files += [p.name for p in info["attempts"].values()]
+                flags += [f for f in info["flags"] if f not in flags]
+            found = [f"a{n}" for n in sorted(nums)]
+            rows.append({"phase": phase_key, "rater": r, "subject": run,
+                         "image": "+".join(images),
                          "found": ",".join(found) or "-",
                          "missing": ",".join(a for a in expected if a not in found),
                          "extra": ",".join(a for a in found if a not in expected),
-                         "files": ", ".join(p.name for p in info["attempts"].values()),
-                         "flags": "; ".join(info["flags"])})
+                         "files": ", ".join(files),
+                         "flags": "; ".join(flags)})
         stray = stray_files(phase_dir, r)
         if stray:
             rows.append({"phase": phase_key, "rater": r, "subject": "(outputs root)",
-                         "found": "-", "missing": "", "extra": "", "files": "",
+                         "image": "", "found": "-", "missing": "", "extra": "", "files": "",
                          "flags": "ignored, outside the subject folders: " + ", ".join(stray)})
-    return pd.DataFrame(rows, columns=["phase", "rater", "subject", "found", "missing",
-                                       "extra", "files", "flags"])
+    return pd.DataFrame(rows, columns=["phase", "rater", "subject", "image", "found",
+                                       "missing", "extra", "files", "flags"])
+
+
+def run_check(cov):
+    """Gate for a multi-run phase, from the coverage table: which runs (and, with
+    echo images, which image of each run) each rater has a mask for, per subject.
+    Runs are done in order, so a rater's runs should be 1..k; raters at different
+    k are only at different points and still share run 1. On an overlap subject
+    every rater must segment the same image of each run, or that run cannot be
+    compared. Status per rater x subject:
+      fail   an overlap subject (2+ raters with masks) where this rater skipped a
+             run (e.g. run 2 without run 1), so their runs do not line up with
+             the other raters' (often a mask saved under the wrong run number), or
+             segmented another image of a run than another rater did
+      check  a skipped run on a subject only this rater has, or on an overlap
+             subject where every rater skipped the same run (they still line up)
+      ok     otherwise
+    Raters with no mask for the subject are left out. Empty when no scan has a run."""
+    scans = cov[cov["subject"] != "(outputs root)"]
+    split = scans["subject"].map(utils.split_scan)
+    scans = scans.assign(sub=[s for s, _ in split], run=[r for _, r in split])
+    scans = scans[scans["run"].notna() & (scans["found"] != "-")]
+    image = scans["image"] if "image" in scans else pd.Series("", index=scans.index)
+
+    def show(have):
+        return ", ".join(f"{n} {'+'.join(sorted(e))}".strip() for n, e in sorted(have.items()))
+
+    rows = []
+    for sub, g in scans.assign(img=image.fillna("")).groupby("sub"):
+        runs = {r: {int(x.run): set(filter(None, x.img.split("+"))) for x in h.itertuples()}
+                for r, h in g.groupby("rater", sort=False)}
+        for r, have in runs.items():
+            others = {o: v for o, v in runs.items() if o != r}
+            notes = []
+            if sorted(have) != list(range(1, len(have) + 1)):
+                notes.append("skipped a run")
+            differ = sorted({n for v in others.values() for n in have
+                             if n in v and have[n] and v[n] and not have[n] & v[n]})
+            if differ:
+                notes.append("another image than the other raters on run "
+                             + ", ".join(map(str, differ)))
+            alike = others and all(v == have for v in others.values())
+            if not notes:
+                status = "ok"
+            elif alike and not differ:
+                status = "check"
+                notes = ["skipped a run, as every other rater did (they line up)"]
+            elif others:
+                status = "fail"
+                notes.append("others: " + "; ".join(f"{o} (run {show(v)})"
+                                                    for o, v in others.items()))
+            else:
+                status = "check"
+                notes = ["skipped a run (e.g. run 2 without run 1)"]
+            rows.append({"subject": sub, "rater": r, "n_raters": len(runs),
+                         "runs": show(have), "status": status, "note": "; ".join(notes)})
+    return pd.DataFrame(rows, columns=["subject", "rater", "n_raters", "runs", "status", "note"])
 
 
 def average_attempt_metrics(attempt_tables, phase_key):
@@ -449,7 +665,7 @@ def average_attempt_metrics(attempt_tables, phase_key):
 
 # ----------------------------- aggregation -------------------------------
 def summarize(df, by, metrics):
-    """mean/sd/min/max (+ n) of each metric, grouped by `by` (list) or overall
+    """mean/median/sd/min/max (+ n) of each metric, grouped by `by` (list) or overall
     when by is None. Sorted by the first metric's mean ascending (worst first)."""
     metrics = [m for m in metrics if m in df.columns]
     if df.empty:
@@ -457,7 +673,8 @@ def summarize(df, by, metrics):
     if by is None:
         row = {"n": len(df)}
         for m in metrics:
-            row |= {f"{m}_mean": df[m].mean(), f"{m}_sd": df[m].std(),
+            row |= {f"{m}_mean": df[m].mean(), f"{m}_median": df[m].median(),
+                    f"{m}_sd": df[m].std(),
                     f"{m}_min": df[m].min(), f"{m}_max": df[m].max()}
         return pd.DataFrame([row])
     rows = []
@@ -465,26 +682,71 @@ def summarize(df, by, metrics):
         key = key if isinstance(key, tuple) else (key,)
         row = dict(zip(by, key)) | {"n": len(g)}
         for m in metrics:
-            row |= {f"{m}_mean": g[m].mean(), f"{m}_sd": g[m].std(),
+            row |= {f"{m}_mean": g[m].mean(), f"{m}_median": g[m].median(),
+                    f"{m}_sd": g[m].std(),
                     f"{m}_min": g[m].min(), f"{m}_max": g[m].max()}
         rows.append(row)
     out = pd.DataFrame(rows)
     return out.sort_values(f"{metrics[0]}_mean").reset_index(drop=True) if metrics else out
 
 
+def average_of_averages(df, metrics, by="subject"):
+    """Phase summary that weights every scan equally: each metric is averaged
+    within a scan first (over its raters or rater pairs), then mean/median/sd/min/max
+    are taken over those per-scan means. n is the number of scans. Equals the grand
+    mean when every scan has the same number of rows."""
+    metrics = [m for m in metrics if m in df.columns]
+    if df.empty:
+        return pd.DataFrame()
+    return summarize(df.groupby(by)[metrics].mean().reset_index(), None, metrics)
+
+
+VOLUME_METRICS = ["vol_mm3", "axial_slices", "coronal_slices", "sagittal_slices",
+                  "axial_mm", "coronal_mm", "sagittal_mm"]
+
+
+def volume_stats(vol):
+    """Volume and extent summaries from the volumes table (raters only):
+      by_rater          per rater over all their scans
+      overlap_by_rater  per rater over the overlap scans (2+ raters)
+      overlap_by_scan   per overlap scan over its raters, with the volume CV
+      overlap_summary   average of the overlap scans' means (each scan once)"""
+    out = {}
+    if vol is None or vol.empty:
+        return out
+    rat = vol[vol["source"] != "expert"].rename(columns={"source": "rater"})
+    metrics = [m for m in VOLUME_METRICS if m in rat.columns]
+    if rat.empty:
+        return out
+    out["volume_by_rater"] = summarize(rat, ["rater"], metrics)
+    n = rat.groupby("subject")["rater"].transform("nunique")
+    ov = rat[n > 1]
+    if not ov.empty:
+        out["volume_overlap_by_rater"] = summarize(ov, ["rater"], metrics)
+        by_scan = summarize(ov, ["subject"], metrics)
+        by_scan["vol_cv"] = by_scan["vol_mm3_sd"] / by_scan["vol_mm3_mean"]
+        out["volume_overlap_by_scan"] = by_scan
+        out["volume_overlap_summary"] = average_of_averages(ov, metrics)
+    return out
+
+
 def _aggregate(phase_key, attempt, tables):
     rve, rvr = tables["rater_vs_expert_per_scan"], tables["rater_vs_rater_per_scan"]
-    agg = {}
+    agg = volume_stats(tables.get("volumes"))
     if not rve.empty:
         agg["rve_by_rater"] = summarize(rve, ["rater"], SD_METRICS)
         agg["rve_by_scan"] = summarize(rve, ["subject"], SD_METRICS)
-        agg["rve_phase_summary"] = summarize(rve, None, SD_METRICS).assign(
-            phase=phase_key, attempt=attempt, comparison="rater_vs_expert")
+        agg["rve_phase_summary"] = pd.concat([
+            summarize(rve, None, SD_METRICS).assign(summary="grand_mean"),
+            average_of_averages(rve, SD_METRICS).assign(summary="average_of_scan_means"),
+        ]).assign(phase=phase_key, attempt=attempt, comparison="rater_vs_expert")
     if not rvr.empty:
         agg["rvr_by_pair"] = summarize(rvr, ["pair"], SD_METRICS)
         agg["rvr_by_scan"] = summarize(rvr, ["subject"], SD_METRICS)
-        agg["rvr_phase_summary"] = summarize(rvr, None, SD_METRICS).assign(
-            phase=phase_key, attempt=attempt, comparison="rater_vs_rater")
+        agg["rvr_phase_summary"] = pd.concat([
+            summarize(rvr, None, SD_METRICS).assign(summary="grand_mean"),
+            average_of_averages(rvr, SD_METRICS).assign(summary="average_of_scan_means"),
+        ]).assign(phase=phase_key, attempt=attempt, comparison="rater_vs_rater")
     return agg
 
 

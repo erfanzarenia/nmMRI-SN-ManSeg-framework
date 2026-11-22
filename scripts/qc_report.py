@@ -38,12 +38,35 @@ def df_to_md(df, cols=None, floatfmt="{:.3f}"):
 
 
 def _round(df, nd=3):
+    """Round for display. A <metric>_mean column with its <metric>_median next to
+    it becomes one "mean (median)" column."""
     if df is None or df.empty:
         return df
     df = df.copy()
     for c in df.select_dtypes("number").columns:
         df[c] = df[c].round(nd)
+    for c in [c for c in df.columns if c.endswith("_mean")]:
+        med = c[:-len("_mean")] + "_median"
+        if med in df.columns:
+            df[c] = [a if pd.isna(b) else f"{a:g} ({b:g})" for a, b in zip(df[c], df[med])]
+            df = df.drop(columns=med).rename(columns={c: f"{c} (median)"})
     return df
+
+
+def _cols(df, cols):
+    """Columns `cols` of df, each <metric>_mean followed by its median when present."""
+    out = []
+    for c in cols:
+        out.append(c)
+        if c.endswith("_mean") and f"{c[:-5]}_median" in df.columns:
+            out.append(f"{c[:-5]}_median")
+    return df[out]
+
+
+def _med(s, metric, fmt):
+    """" (median X)" for a summary row, empty when it has no median."""
+    v = s.get(f"{metric}_median")
+    return f" (median {v:{fmt}})" if v is not None and pd.notna(v) else ""
 
 
 def compute_findings(tag, tables):
@@ -64,6 +87,7 @@ def compute_findings(tag, tables):
         f["by_scan"] = by_scan
         f["hardest_scans"] = by_scan.head(3)                   # lowest mean Dice
         f["phase_summary_rve"] = qa.summarize(rve, None, qa.SD_METRICS)
+        f["phase_avg_rve"] = qa.average_of_averages(rve, qa.SD_METRICS)
         # statistical outlier rater-scan cells (Dice z<=-2 or HD95 z>=+2)
         d, h = rve["dice"], rve["hd95"]
         zc = rve.assign(
@@ -78,6 +102,7 @@ def compute_findings(tag, tables):
         f["least_concordant_pair"] = by_pair.iloc[0]["pair"]
         f["most_concordant_pair"] = by_pair.iloc[-1]["pair"]
         f["phase_summary_rvr"] = qa.summarize(rvr, None, qa.SD_METRICS)
+        f["phase_avg_rvr"] = qa.average_of_averages(rvr, qa.SD_METRICS)
 
     if vol is not None and not vol.empty and "expert" in set(vol["source"]):
         exp = vol[vol.source == "expert"].set_index("subject")["vol_mm3"]
@@ -120,7 +145,9 @@ def coverage_report(phase_key, cov, expected, path):
     then the notes behind every '*'. Returns one summary line per rater."""
     scans = cov[cov["subject"] != ROOT_ROW]
     raters = list(dict.fromkeys(cov["rater"]))
-    found = {(r.rater, r.subject): r.found for r in scans.itertuples()}
+    image = scans["image"].fillna("") if "image" in scans else pd.Series("", index=scans.index)
+    found = {(r.rater, r.subject): r.found + (f" {i}" if i and r.found != "-" else "")
+             for r, i in zip(scans.itertuples(), image)}
     noted = {(r.rater, r.subject) for r in scans.itertuples() if r.flags}
     summary = []
     for r in raters:
@@ -142,8 +169,9 @@ def coverage_report(phase_key, cov, expected, path):
         summary.append(f"{r}: " + ", ".join(parts))
 
     L = [f"# Coverage: {phase_key}", "",
-         f"Attempts found per rater and scan (expected: {', '.join(expected)}). "
-         "`·` means no usable mask and `*` marks a scan with a note below. The QC "
+         f"Attempts found per rater and scan (expected: {', '.join(expected)}), with "
+         "the image segmented where a run has several (combo, echo). `·` means no "
+         "usable mask and `*` marks a scan with a note below. The QC "
          "metrics use whatever masks exist, so gaps only reduce what is compared.", "",
          "| scan | " + " | ".join(raters) + " |", "|---|" + "---|" * len(raters)]
     for s in sorted(scans["subject"].unique()):
@@ -160,6 +188,47 @@ def coverage_report(phase_key, cov, expected, path):
                                      for r in notes.itertuples()]
     Path(path).write_text("\n".join(L) + "\n")
     return summary
+
+
+def run_check_report(phase_key, gate, path):
+    """Append the run gate to coverage.md. Returns summary lines for the console and
+    one line for the reports (None when the phase has no runs)."""
+    if gate.empty:
+        return [], None
+    bad = gate[gate["status"] != "ok"]
+    fails, checks = bad[bad["status"] == "fail"], bad[bad["status"] == "check"]
+    n_overlap = gate.loc[gate["n_raters"] > 1, "subject"].nunique()
+    L = ["", "## Run check (gate)", "",
+         "Runs are segmented in order (run 1, then run 2, ...), so the raters of an "
+         "overlap subject always share their runs and can be compared. Masks are only "
+         "compared on the same run and image, so on an overlap subject every rater "
+         "must also segment the same image (combo or echo) of each run. A rater who "
+         "skipped a run (e.g. has run 2 but no run 1) or segmented another image than "
+         "the other raters fails on an overlap subject; a skipped run is listed for a "
+         "check on their own subjects, and on an overlap subject where every rater "
+         "skipped the same run (they still line up). A skipped run is often a mask saved under the "
+         "wrong run number. Details in `run_check.csv`.", "",
+         f"- **{'FAIL' if len(fails) else 'PASS'}**: {n_overlap} overlap subject(s) "
+         f"with masks, {fails['subject'].nunique()} with runs or images that do not line up."]
+    L += [f"  - {r.subject}, {r.rater}: run {r.runs}; {r.note}" for r in fails.itertuples()]
+    L += [f"- **Check**: {len(checks)} subject(s) with a skipped run to check."]
+    L += [f"  - {r.subject}, {r.rater}: run {r.runs}" + (f"; {r.note}" if r.n_raters > 1 else "")
+          for r in checks.itertuples()]
+    with open(path, "a") as f:
+        f.write("\n".join(L) + "\n")
+    console = [f"run check: {'FAIL' if len(fails) else 'PASS'} ({fails['subject'].nunique()} "
+               f"overlap subject(s) with runs or images that do not line up); {len(checks)} "
+               "subject(s) with a skipped run to check"]
+    console += [f"  FAIL {r.subject} {r.rater}: run {r.runs}; {r.note}" for r in fails.itertuples()]
+    console += [f"  check {r.subject} {r.rater}: run {r.runs} only" for r in checks.itertuples()]
+    note = ("Run check: **FAIL**, runs or images do not line up between raters on overlap subject(s) "
+            + ", ".join(sorted(fails["subject"].unique())) + " (see coverage.md)."
+            if len(fails) else "Run check: pass, the runs and images of every overlap "
+            "subject line up between raters.")
+    if len(checks):
+        note += (f" {len(checks)} subject(s) with a skipped run to check: "
+                 + ", ".join(f"{r.rater} {r.subject}" for r in checks.itertuples()) + ".")
+    return console, note
 
 
 def attempt_note(cov, attempt):
@@ -190,6 +259,7 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
 
     rve = tables.get("rater_vs_expert_per_scan")
     rvr = tables.get("rater_vs_rater_per_scan")
+    vol = tables.get("volumes")
     n_sub = rve["subject"].nunique() if rve is not None and not rve.empty else (
         rvr["subject"].nunique() if rvr is not None and not rvr.empty else 0)
 
@@ -203,19 +273,29 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
 
     # headline
     A("## Headline\n")
+    if "phase_avg_rve" in f:
+        s = f["phase_avg_rve"].iloc[0]
+        A(f"- **Phase summary, rater vs expert** (average of {int(s['n'])} per-scan "
+          f"means): Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**{_med(s, 'dice', '.3f')}, "
+          f"HD95 **{s['hd95_mean']:.2f} mm**{_med(s, 'hd95', '.2f')}.")
+    if "phase_avg_rvr" in f:
+        s = f["phase_avg_rvr"].iloc[0]
+        A(f"- **Phase summary, inter-rater** (average of {int(s['n'])} per-scan "
+          f"means): Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**{_med(s, 'dice', '.3f')}, "
+          f"HD95 **{s['hd95_mean']:.2f} mm**{_med(s, 'hd95', '.2f')}.")
     if "phase_summary_rve" in f:
         s = f["phase_summary_rve"].iloc[0]
         A(f"- **Rater vs expert** (grand mean over {int(s['n'])} rater-scans): "
-          f"Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**, "
-          f"HD95 **{s['hd95_mean']:.2f} mm**, HD {s['hd_mean']:.2f} mm, "
+          f"Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**{_med(s, 'dice', '.3f')}, "
+          f"HD95 **{s['hd95_mean']:.2f} mm**{_med(s, 'hd95', '.2f')}, HD {s['hd_mean']:.2f} mm, "
           f"ASSD {s['assd_mean']:.3f} mm.")
         A(f"- **Strongest rater:** {f['strongest_rater']} · "
           f"**Weakest rater:** {f['weakest_rater']}.")
     if "phase_summary_rvr" in f:
         s = f["phase_summary_rvr"].iloc[0]
         A(f"- **Inter-rater** (grand mean over {int(s['n'])} pair-scans): "
-          f"Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**, "
-          f"HD95 {s['hd95_mean']:.2f} mm. "
+          f"Dice **{s['dice_mean']:.3f} ± {s['dice_sd']:.3f}**{_med(s, 'dice', '.3f')}, "
+          f"HD95 {s['hd95_mean']:.2f} mm{_med(s, 'hd95', '.2f')}. "
           f"Least concordant pair: **{f.get('least_concordant_pair','n/a')}**, "
           f"most concordant: **{f.get('most_concordant_pair','n/a')}**.")
     A("")
@@ -235,11 +315,11 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
     if rve is not None and not rve.empty:
         A("\n## Rater vs expert\n")
         A("### Per rater (averaged across scans, worst first)\n")
-        A(df_to_md(_round(f["by_rater"][["rater", "n", "dice_mean", "dice_sd",
-            "hd_mean", "hd95_mean", "assd_mean"]])))
+        A(df_to_md(_round(_cols(f["by_rater"], ["rater", "n", "dice_mean", "dice_sd",
+            "hd_mean", "hd95_mean", "assd_mean"]))))
         A("\n### Per scan (averaged across raters, hardest first)\n")
-        A(df_to_md(_round(f["by_scan"][["subject", "n", "dice_mean", "dice_sd",
-            "hd95_mean", "hd95_max"]])))
+        A(df_to_md(_round(_cols(f["by_scan"], ["subject", "n", "dice_mean", "dice_sd",
+            "hd95_mean", "hd95_max"]))))
         A("\n### Outlier rater-scan cells (Dice z≤−2, HD95 z≥+2, or Dice<0.60)\n")
         A(df_to_md(_round(f["outliers"])) if not f["outliers"].empty
           else "_none flagged_\n")
@@ -249,6 +329,31 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
         A(f"\n![Dice vs expert]({plots_rel}/dice_rater_vs_expert_{fig_tag}.png)\n")
         A(f"![Hausdorff vs expert]({plots_rel}/hausdorff_rater_vs_expert_{fig_tag}.png)\n")
         A(f"![Dice by rater]({plots_rel}/dice_by_rater_{fig_tag}.png)\n")
+
+    # volume and extent
+    vs = qa.volume_stats(vol)
+    if vs:
+        cols = ["n", "vol_mm3_mean", "vol_mm3_sd", "vol_mm3_min", "vol_mm3_max",
+                "axial_slices_mean", "coronal_slices_mean", "sagittal_slices_mean"]
+        A("\n## SN volume and extent\n")
+        A("Volume in mm³; extent as the number of axial, coronal and sagittal slices the "
+          "SN spans (mm in `metrics/volumes.csv`). Raters only.\n")
+        A("### Per rater, all their scans\n")
+        A(df_to_md(_round(_cols(vs["volume_by_rater"], ["rater"] + cols))))
+        if "volume_overlap_by_rater" in vs:
+            s = vs["volume_overlap_summary"].iloc[0]
+            A(f"\n### Overlap scans (2+ raters)\n")
+            A(f"Average of {int(s['n'])} overlap scans: volume **{s['vol_mm3_mean']:.0f} mm³**"
+              f" (median {s['vol_mm3_median']:.0f}, SD across scans {s['vol_mm3_sd']:.0f}); axial "
+              f"{s['axial_slices_mean']:.1f}, coronal {s['coronal_slices_mean']:.1f}, "
+              f"sagittal {s['sagittal_slices_mean']:.1f} slices.\n")
+            A("Per rater, overlap scans only:\n")
+            A(df_to_md(_round(_cols(vs["volume_overlap_by_rater"], ["rater"] + cols))))
+            A("\nPer overlap scan, across its raters (`vol_cv` = SD / mean):\n")
+            A(df_to_md(_round(_cols(vs["volume_overlap_by_scan"].sort_values(
+                "vol_cv", ascending=False), ["subject", "n", "vol_mm3_mean", "vol_mm3_sd",
+                "vol_cv", "vol_mm3_min", "vol_mm3_max", "axial_slices_min",
+                "axial_slices_max"]))))
 
     # volume bias
     if "vol_bias" in f:
@@ -260,8 +365,8 @@ def phase_report(tag, tables, base_dir, fig_tag, reproducibility=None,
     if rvr is not None and not rvr.empty:
         A("\n## Rater vs rater (inter-rater)\n")
         A("### Per rater pair (worst first)\n")
-        A(df_to_md(_round(f["by_pair"][["pair", "n", "dice_mean", "dice_sd",
-            "hd95_mean", "assd_mean"]])))
+        A(df_to_md(_round(_cols(f["by_pair"], ["pair", "n", "dice_mean", "dice_sd",
+            "hd95_mean", "assd_mean"]))))
         A(f"\n![Inter-rater Dice]({plots_rel}/dice_rater_vs_rater_{fig_tag}.png)\n")
         A(f"![Inter-rater Dice by pair]({plots_rel}/dice_by_pair_{fig_tag}.png)\n")
 
@@ -346,8 +451,10 @@ def overall_report(phase_findings, overall_tables, qc_root, links=None, label=1)
         if "phase_summary_rve" in f:
             s = f["phase_summary_rve"].iloc[0]
             rows.append({"phase": tag, "n": int(s["n"]),
-                         "dice_mean": s["dice_mean"], "dice_sd": s["dice_sd"],
-                         "hd95_mean": s["hd95_mean"], "assd_mean": s["assd_mean"],
+                         "dice_mean": s["dice_mean"], "dice_median": s.get("dice_median"),
+                         "dice_sd": s["dice_sd"],
+                         "hd95_mean": s["hd95_mean"], "hd95_median": s.get("hd95_median"),
+                         "assd_mean": s["assd_mean"], "assd_median": s.get("assd_median"),
                          "strongest": f.get("strongest_rater"),
                          "weakest": f.get("weakest_rater")})
     A(df_to_md(_round(pd.DataFrame(rows))))
@@ -357,16 +464,36 @@ def overall_report(phase_findings, overall_tables, qc_root, links=None, label=1)
         A("### Grand average\n")
         A(df_to_md(_round(qa.summarize(rve, None, qa.SD_METRICS))))
         A("\n### Per rater (pooled, worst first)\n")
-        A(df_to_md(_round(qa.summarize(rve, ["rater"], qa.SD_METRICS)[
-            ["rater", "n", "dice_mean", "dice_sd", "hd95_mean", "assd_mean"]])))
+        A(df_to_md(_round(_cols(qa.summarize(rve, ["rater"], qa.SD_METRICS),
+            ["rater", "n", "dice_mean", "dice_sd", "hd95_mean", "assd_mean"]))))
         A(f"\n![Overall Dice vs expert](plots/dice_rater_vs_expert_overall.png)\n")
         A(f"![Overall Hausdorff vs expert](plots/hausdorff_rater_vs_expert_overall.png)\n")
         A(f"![Overall Dice by rater](plots/dice_by_rater_overall.png)\n")
 
+    rows = []
+    for tag, f in phase_findings.items():
+        if "phase_avg_rvr" in f:
+            s = f["phase_avg_rvr"].iloc[0]
+            rows.append({"phase": tag, "scans": int(s["n"]),
+                         "dice_mean": s["dice_mean"], "dice_median": s.get("dice_median"),
+                         "dice_sd": s["dice_sd"],
+                         "hd95_mean": s["hd95_mean"], "hd95_median": s.get("hd95_median"),
+                         "assd_mean": s["assd_mean"], "assd_median": s.get("assd_median")})
+    if rows:
+        A("\n## Phase summary (inter-rater, average of per-scan means)\n")
+        if rvr is not None and not rvr.empty:
+            s = qa.average_of_averages(rvr, qa.SD_METRICS, by=["phase", "subject"]).iloc[0]
+            rows.append({"phase": "all", "scans": int(s["n"]),
+                         "dice_mean": s["dice_mean"], "dice_median": s.get("dice_median"),
+                         "dice_sd": s["dice_sd"],
+                         "hd95_mean": s["hd95_mean"], "hd95_median": s.get("hd95_median"),
+                         "assd_mean": s["assd_mean"], "assd_median": s.get("assd_median")})
+        A(df_to_md(_round(pd.DataFrame(rows))))
+
     if rvr is not None and not rvr.empty:
         A("\n## Pooled inter-rater\n")
-        A(df_to_md(_round(qa.summarize(rvr, ["pair"], qa.SD_METRICS)[
-            ["pair", "n", "dice_mean", "dice_sd", "hd95_mean", "assd_mean"]])))
+        A(df_to_md(_round(_cols(qa.summarize(rvr, ["pair"], qa.SD_METRICS),
+            ["pair", "n", "dice_mean", "dice_sd", "hd95_mean", "assd_mean"]))))
         A(f"\n![Overall inter-rater Dice by pair](plots/dice_by_pair_overall.png)\n")
 
     A("\n## Cross-phase findings\n")

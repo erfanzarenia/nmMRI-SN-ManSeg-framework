@@ -35,7 +35,11 @@ phase3_mock_exam/<RATER>/
 
 ```
 outputs/<sub-XXXX>/<INIT>_mask.nii.gz
+outputs/<sub-XXXX>/<INIT>_mask_unfilled.nii.gz   # before filling holes
 ```
+
+Each mask also has its unfilled copy, saved before the holes are filled, with
+`_unfilled` at the end of the name (see [itksnap_instructions.md](itksnap_instructions.md#save-the-mask)).
 
 ## Quality control
 

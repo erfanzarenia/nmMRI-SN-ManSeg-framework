@@ -147,8 +147,8 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
     tag = {"phase": phase_key, "attempt": "latest" if attempt == "latest" else f"a{attempt}"}
     prot, agree = [], []
     for sub in utils.find_subjects(phase_dir, raters):
-        assigned = [r for r in raters if utils.input_dir(phase_dir, r, sub).is_dir()]
-        image_path = utils.resolve(utils.input_dir(phase_dir, assigned[0], sub) / "image.nii.gz")
+        assigned = [r for r in raters if utils.input_image(phase_dir, r, sub)]
+        image_path = utils.input_image(phase_dir, assigned[0], sub)
         image = affine = zooms = None
         masks, rows = {}, {}
         for r in assigned:

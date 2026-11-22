@@ -25,23 +25,25 @@ pools:
     expert_mask_pattern: "{subject}/NM_echo1*_SN.nii.gz"
     subjects: subjects_labeled.txt
 
-  # SNIT study set (SNIT calibration + production): the regular NM combined-echo
-  # ("combo echo") image, not Echo 1. Adults and adolescents are separate BIDS
-  # datasets; SNIT_Bids_New holds subjects never converted into them. `run`
-  # selects the NM run (1 or 2) for every subject. The second pattern is the
-  # older name of the same image (acq-NM ... T2starw), used only when no
-  # CombEchoNM file exists: it was voxel-identical to CombEchoNM for all 179
-  # subjects that have both (checked 2026-10-28).
+  # Study set (calibration + production): the NM combined-echo ("combo") image.
+  # A pool may span several BIDS datasets, searched in order. `run` is the NM run
+  # of a phase using one image per subject; a phase with `runs` in phases.yaml
+  # takes each of those runs instead. image_pattern may list fallbacks (an older
+  # name of the same image). echo_patterns gives the Echo 1 image of each run,
+  # used by a phase whose `echoes` lists "echo"; it must be on the same grid as
+  # the combined image.
   study:
     data_root:
       - /path/to/study_bids_adults
       - /path/to/study_bids_adolescents
-      - /path/to/study_bids_new
     layout: bids
     run: 1
     image_pattern:
       - "{subject}/anat/{subject}_acq-CombEchoNM_run-{run:02d}_GRE.nii.gz"
       - "{subject}/anat/{subject}_acq-NM_run-{run:02d}_T2starw.nii.gz"
+    echo_patterns:
+      echo:
+        - "{subject}/anat/{subject}_acq-NM_run-{run:02d}_echo-1_part-mag_GRE.nii.gz"
     expert_mask_pattern: null
     subjects: subjects_study.csv
 
