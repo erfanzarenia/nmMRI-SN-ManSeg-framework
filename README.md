@@ -97,10 +97,12 @@ segmented, and [docs/qc.md](docs/qc.md) for QC details.
   echo]` offers each run as two images, `inputs/<sub>/image_run_<N>_combo.nii.gz`
   (the pool's image_pattern) and `image_run_<N>_echo.nii.gz` (Echo 1, the pool's
   `echo_patterns`); the rater segments one of them per run, as
-  `outputs/<sub>/<INIT>_mask_run_<N>_combo.nii.gz` or `_echo.nii.gz`. QC compares
-  masks only on the same run and image, and its run check fails an overlap
-  subject whose raters chose different runs or images. `run1_only` keeps listed
-  subjects to run 1. A file naming no run or no image is flagged and not used.
+  `outputs/<sub>/<INIT>_mask_run_<N>_combo.nii.gz` or `_echo.nii.gz`.
+  `runs_required: 1` makes any one run enough for a subject (without it every run
+  is needed). QC compares masks only on the same run and image, and its run check
+  fails an overlap subject where a rater shares no run and image with any other
+  rater. `run1_only` keeps listed subjects to run 1. A file naming no run or no
+  image is flagged and not used.
 - To even out a phase in progress use `split_subjects.py --rebalance phaseN
   --hold-next 5 --hold <RATER>:<ID>`: it keeps the overlap and every assignment
   apart from the few subjects handed over, then `make_workspace.py --phase phaseN

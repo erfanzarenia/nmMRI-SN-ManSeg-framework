@@ -59,8 +59,9 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
   holding every label of the phase.
 - Phase 6 has two images per NM acquisition (run 1, for most subjects run 2, for a
   few also run 3): the combined echoes, `image_run_N_combo.nii.gz`, and Echo 1,
-  `image_run_N_echo.nii.gz`. Each run is segmented once, on whichever image shows
-  the SN better: `<INIT>_mask_run_N_combo.nii.gz` or `<INIT>_mask_run_N_echo.nii.gz`.
+  `image_run_N_echo.nii.gz`. One run per subject is enough (run 1, another only
+  when run 1 is unusable), segmented once, on whichever image shows the SN better:
+  `<INIT>_mask_run_N_combo.nii.gz` or `<INIT>_mask_run_N_echo.nii.gz`.
   The `_run_N_combo` / `_run_N_echo` ending is required. See [phase6.md](phase6.md).
 - The source dataset may be BIDS-style or a single flat folder, with `.nii` or
   `.nii.gz` files (set `layout` per pool in

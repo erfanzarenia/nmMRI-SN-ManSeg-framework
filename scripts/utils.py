@@ -127,6 +127,13 @@ def phase_runs(pcfg, subject=None):
     return pcfg.get("runs")
 
 
+def runs_required(pcfg):
+    """Runs a subject needs a mask on to be done in a multi-run phase: the phase's
+    `runs_required` (e.g. 1: any one run is enough), else None (every run)."""
+    n = pcfg.get("runs_required")
+    return int(n) if n else None
+
+
 def phase_echoes(pcfg):
     """Echo images a multi-run phase holds per run (e.g. [combo, echo]), or None."""
     return pcfg.get("echoes")

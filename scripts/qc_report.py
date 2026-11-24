@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 import qc_analysis as qa
+import utils
 
 
 def df_to_md(df, cols=None, floatfmt="{:.3f}"):
@@ -140,9 +141,11 @@ def methods(label=1):
 ROOT_ROW = "(outputs root)"
 
 
-def coverage_report(phase_key, cov, expected, path):
+def coverage_report(phase_key, cov, expected, path, runs_required=None):
     """Write <phase>/coverage.md: which attempts each rater has for each scan,
-    then the notes behind every '*'. Returns one summary line per rater."""
+    then the notes behind every '*'. Returns one summary line per rater. In a
+    multi-run phase the line also counts subjects done: with a mask on
+    `runs_required` of their runs (any runs), or on every run when None."""
     scans = cov[cov["subject"] != ROOT_ROW]
     raters = list(dict.fromkeys(cov["rater"]))
     image = scans["image"].fillna("") if "image" in scans else pd.Series("", index=scans.index)
@@ -166,6 +169,18 @@ def coverage_report(phase_key, cov, expected, path):
         extra = sorted(set().union(*have) - set(expected))
         if extra:
             parts.append("also " + ", ".join(extra))
+        subs = [utils.split_scan(x) for x in g["subject"]]
+        if all(n is not None for _, n in subs):          # multi-run: runs, then subjects
+            parts[0] += " runs"
+            n_runs, n_done = {}, {}
+            for (sub, _), h in zip(subs, have):
+                n_runs[sub] = n_runs.get(sub, 0) + 1
+                n_done[sub] = n_done.get(sub, 0) + bool(h)
+            need = {k: min(runs_required or v, v) for k, v in n_runs.items()}
+            done = sum(n_done[k] >= need[k] for k in n_runs)
+            what = ("any one run" if runs_required == 1 else
+                    f"any {runs_required} runs" if runs_required else "every run")
+            parts.insert(0, f"subjects done {done}/{len(n_runs)} ({what})")
         summary.append(f"{r}: " + ", ".join(parts))
 
     L = [f"# Coverage: {phase_key}", "",
@@ -199,17 +214,15 @@ def run_check_report(phase_key, gate, path):
     fails, checks = bad[bad["status"] == "fail"], bad[bad["status"] == "check"]
     n_overlap = gate.loc[gate["n_raters"] > 1, "subject"].nunique()
     L = ["", "## Run check (gate)", "",
-         "Runs are segmented in order (run 1, then run 2, ...), so the raters of an "
-         "overlap subject always share their runs and can be compared. Masks are only "
-         "compared on the same run and image, so on an overlap subject every rater "
-         "must also segment the same image (combo or echo) of each run. A rater who "
-         "skipped a run (e.g. has run 2 but no run 1) or segmented another image than "
-         "the other raters fails on an overlap subject; a skipped run is listed for a "
-         "check on their own subjects, and on an overlap subject where every rater "
-         "skipped the same run (they still line up). A skipped run is often a mask saved under the "
-         "wrong run number. Details in `run_check.csv`.", "",
+         "Masks are only compared on the same run and image (combo or echo), so on an "
+         "overlap subject a rater's masks count for reliability only where another "
+         "rater has a mask on the same run and image. A rater with no run and image in "
+         "common with any other rater fails (a different run or image, or a mask "
+         "saved under the wrong run number). Where every run is required, a skipped "
+         "run (e.g. run 2 but no run 1) is listed for a check. Details in "
+         "`run_check.csv`.", "",
          f"- **{'FAIL' if len(fails) else 'PASS'}**: {n_overlap} overlap subject(s) "
-         f"with masks, {fails['subject'].nunique()} with runs or images that do not line up."]
+         f"with masks, {fails['subject'].nunique()} where a rater has nothing comparable."]
     L += [f"  - {r.subject}, {r.rater}: run {r.runs}; {r.note}" for r in fails.itertuples()]
     L += [f"- **Check**: {len(checks)} subject(s) with a skipped run to check."]
     L += [f"  - {r.subject}, {r.rater}: run {r.runs}" + (f"; {r.note}" if r.n_raters > 1 else "")
@@ -217,14 +230,14 @@ def run_check_report(phase_key, gate, path):
     with open(path, "a") as f:
         f.write("\n".join(L) + "\n")
     console = [f"run check: {'FAIL' if len(fails) else 'PASS'} ({fails['subject'].nunique()} "
-               f"overlap subject(s) with runs or images that do not line up); {len(checks)} "
+               f"overlap subject(s) where a rater has nothing comparable); {len(checks)} "
                "subject(s) with a skipped run to check"]
     console += [f"  FAIL {r.subject} {r.rater}: run {r.runs}; {r.note}" for r in fails.itertuples()]
     console += [f"  check {r.subject} {r.rater}: run {r.runs} only" for r in checks.itertuples()]
-    note = ("Run check: **FAIL**, runs or images do not line up between raters on overlap subject(s) "
-            + ", ".join(sorted(fails["subject"].unique())) + " (see coverage.md)."
-            if len(fails) else "Run check: pass, the runs and images of every overlap "
-            "subject line up between raters.")
+    note = ("Run check: **FAIL**, a rater has no run and image in common with the other "
+            "raters on overlap subject(s) " + ", ".join(sorted(fails["subject"].unique()))
+            + " (see coverage.md)." if len(fails) else "Run check: pass, every rater of "
+            "an overlap subject shares a run and image with another rater.")
     if len(checks):
         note += (f" {len(checks)} subject(s) with a skipped run to check: "
                  + ", ".join(f"{r.rater} {r.subject}" for r in checks.itertuples()) + ".")

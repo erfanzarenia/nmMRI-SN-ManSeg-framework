@@ -240,10 +240,11 @@ def run(todo, variant, qc_root, workspace, phases, raters, paths, split, label):
         (qc_root / ph).mkdir(parents=True, exist_ok=True)
         cov.to_csv(qc_root / ph / "coverage.csv", index=False)
         print(f"  coverage (details in {qc_root / ph / 'coverage.md'}):")
+        need = utils.runs_required(pcfg)
         for line in qr.coverage_report(ph, cov, qa.expected_attempts(pcfg),
-                                       qc_root / ph / "coverage.md"):
+                                       qc_root / ph / "coverage.md", need):
             print(f"    {line}")
-        gate = qa.run_check(cov)
+        gate = qa.run_check(cov, need)
         gate_lines, gate_note = qr.run_check_report(ph, gate, qc_root / ph / "coverage.md")
         if gate_note:
             gate.to_csv(qc_root / ph / "run_check.csv", index=False)

@@ -19,7 +19,8 @@ Run-aware: in a multi-run phase each acquisition is its own scan (sub-0001_run_2
 with its own row in every table and its own image grid. With `echoes` a run is
 offered as more than one image (combo, echo) and each image is its own scan
 (sub-0001_run_2_echo): masks are only compared with masks of the same run and
-image. A mask counts for the run its name gives: the number after "run" with any
+image. With `runs_required` (e.g. 1) a subject is done once that many of its runs
+have a mask, on any runs. A mask counts for the run its name gives: the number after "run" with any
 separator or none (run_2, run-02, Run 2, run2), else the one number left once the
 attempt (a1), echo (echo1) and subject (sub-0029) tokens are set aside
 (R4_mask_2). It counts for the image its name gives (_combo or _echo, any
@@ -554,19 +555,20 @@ def coverage(phase_key, workspace, phases, raters, split=None):
                                        "missing", "extra", "files", "flags"])
 
 
-def run_check(cov):
+def run_check(cov, runs_required=None):
     """Gate for a multi-run phase, from the coverage table: which runs (and, with
     echo images, which image of each run) each rater has a mask for, per subject.
-    Runs are done in order, so a rater's runs should be 1..k; raters at different
-    k are only at different points and still share run 1. On an overlap subject
-    every rater must segment the same image of each run, or that run cannot be
-    compared. Status per rater x subject:
-      fail   an overlap subject (2+ raters with masks) where this rater skipped a
-             run (e.g. run 2 without run 1), so their runs do not line up with
-             the other raters' (often a mask saved under the wrong run number), or
-             segmented another image of a run than another rater did
-      check  a skipped run on a subject only this rater has, or on an overlap
-             subject where every rater skipped the same run (they still line up)
+    Masks are only compared on the same run and image, so on an overlap subject a
+    rater's masks count for reliability only where another rater has a mask on
+    the same run and image. With `runs_required` (e.g. 1) a subject is done once
+    that many runs have a mask, on any runs; without it every run is needed and
+    runs are done in order (run 1, then run 2, ...). Status per rater x subject:
+      fail   an overlap subject (2+ raters with masks) where this rater has no run
+             and image in common with any other rater, so nothing can be compared
+             (a different run, a different image, or a mask saved under the wrong
+             run number)
+      check  every run required: a skipped run (e.g. run 2 without run 1), often
+             a mask saved under the wrong run number
       ok     otherwise
     Raters with no mask for the subject are left out. Empty when no scan has a run."""
     scans = cov[cov["subject"] != "(outputs root)"]
@@ -578,31 +580,21 @@ def run_check(cov):
     def show(have):
         return ", ".join(f"{n} {'+'.join(sorted(e))}".strip() for n, e in sorted(have.items()))
 
+    def pairs(have):                                 # {(run, image)}; "" when no images
+        return {(n, e) for n, es in have.items() for e in (es or {""})}
+
     rows = []
     for sub, g in scans.assign(img=image.fillna("")).groupby("sub"):
         runs = {r: {int(x.run): set(filter(None, x.img.split("+"))) for x in h.itertuples()}
                 for r, h in g.groupby("rater", sort=False)}
         for r, have in runs.items():
             others = {o: v for o, v in runs.items() if o != r}
-            notes = []
-            if sorted(have) != list(range(1, len(have) + 1)):
-                notes.append("skipped a run")
-            differ = sorted({n for v in others.values() for n in have
-                             if n in v and have[n] and v[n] and not have[n] & v[n]})
-            if differ:
-                notes.append("another image than the other raters on run "
-                             + ", ".join(map(str, differ)))
-            alike = others and all(v == have for v in others.values())
-            if not notes:
-                status = "ok"
-            elif alike and not differ:
-                status = "check"
-                notes = ["skipped a run, as every other rater did (they line up)"]
-            elif others:
+            notes, status = [], "ok"
+            if others and not any(pairs(have) & pairs(v) for v in others.values()):
                 status = "fail"
-                notes.append("others: " + "; ".join(f"{o} (run {show(v)})"
-                                                    for o, v in others.items()))
-            else:
+                notes = ["no run and image in common with any other rater; others: "
+                         + "; ".join(f"{o} (run {show(v)})" for o, v in others.items())]
+            elif runs_required is None and sorted(have) != list(range(1, len(have) + 1)):
                 status = "check"
                 notes = ["skipped a run (e.g. run 2 without run 1)"]
             rows.append({"subject": sub, "rater": r, "n_raters": len(runs),

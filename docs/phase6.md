@@ -30,19 +30,23 @@ acquisition:
 - `image_run_<N>_echo.nii.gz`: Echo 1, the kind of image used in Phases 1 to 4.
   Set its contrast afresh.
 
-Each run is segmented **once**, on whichever of the two images shows the SN and CP
-better. The Echo 1 image is an option, not extra work: one mask per run, never
-one per image.
+**One run per subject is enough.** Segment run 1, and use run 2 (or run 3) only
+when run 1 is unusable, for example because of motion. A subject with a mask on
+any one run is done: no second run is needed, and a subject already segmented on
+another run is not redone. That run is segmented once, on whichever of its two
+images shows the SN and CP better. The Echo 1 image is an option, not extra work:
+one mask per subject, never one per image.
 
 ## What the rater does
 
-For each run of each assigned subject, the rater:
+For each assigned subject, the rater:
 
-1. Opens `inputs/<sub>/image_run_<N>_combo.nii.gz` or `image_run_<N>_echo.nii.gz`
-   in ITK-SNAP, whichever gives the better contrast for that run.
+1. Opens `inputs/<sub>/image_run_1_combo.nii.gz` or `image_run_1_echo.nii.gz` in
+   ITK-SNAP, whichever gives the better contrast (run 2 instead only when run 1
+   is unusable).
 2. Creates one segmentation (SN, then CP), blindly, consistent with the Exam
-   and the SNIT calibration. Each run is segmented from scratch: a mask is never
-   copied from, or loaded onto, another run.
+   and the SNIT calibration, from scratch: a mask is never copied from, or
+   loaded onto, another run.
 3. Saves it as **`<INIT>_mask_run_<N>_<image>.nii.gz`**, with the run number and
    the image label (`combo` or `echo`) of the image it was drawn on.
    Before filling any holes it first saves the mask as it is, with `_unfilled`
@@ -64,19 +68,18 @@ phase6_production/<RATER>/
 
 ## Output
 
-One mask per run, for example:
+One mask per subject, for example:
 
 ```
 outputs/<sub-XXXX>/<INIT>_mask_run_1_combo.nii.gz   # run 1 drawn on the combined echoes
-outputs/<sub-XXXX>/<INIT>_mask_run_2_echo.nii.gz    # run 2 drawn on Echo 1
-outputs/<sub-XXXX>/<INIT>_mask_run_3_combo.nii.gz   # only if the subject has run 3
+outputs/<sub-XXXX>/<INIT>_mask_run_1_echo.nii.gz    # or: run 1 drawn on Echo 1
+outputs/<sub-XXXX>/<INIT>_mask_run_2_combo.nii.gz   # or: run 2, when run 1 was unusable
 ```
 
-Each of them also has its unfilled copy, saved before the holes are filled:
+It also has its unfilled copy, saved before the holes are filled:
 
 ```
 outputs/<sub-XXXX>/<INIT>_mask_run_1_combo_unfilled.nii.gz
-outputs/<sub-XXXX>/<INIT>_mask_run_2_echo_unfilled.nii.gz
 ```
 
 ## Masks saved before the image labels

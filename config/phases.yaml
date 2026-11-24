@@ -48,6 +48,8 @@
 #               one simply has fewer. Inputs are inputs/<sub>/image_run_<N>.nii.gz,
 #               masks outputs/<sub>/<rater>_mask_run_<N>.nii.gz. Without it each
 #               subject has one image.nii.gz, of the pool's `run`
+#   runs_required optional, with runs: how many runs a subject needs a mask on to
+#               be done (1: any one run is enough). Without it every run is needed.
 #   labels      labels segmented, all in one mask file (values as in
 #               docs/SN_label_definition.txt): SN = 1, CP = 2 (cerebral
 #               peduncle reference region, from Phase 3). Default: [SN]
@@ -119,6 +121,7 @@ phase6:
   overlap_subjects: [sub-1001, sub-5001]  # optional: must be in the overlap
   raters: [R1, R2, R3]           # optional: only these raters segment production
   runs: [1, 2]                   # every NM acquisition of a subject
+  runs_required: 1               # a subject is done with a mask on any one run
   run1_only: []                  # optional: subjects kept to run 1
   echoes: [combo, echo]          # per run: combined echoes (image_pattern) and Echo 1
   balance_by: age_group          # split the overlap evenly between age groups
