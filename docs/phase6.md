@@ -20,13 +20,12 @@ is the actual research output.
 **Labels:** SN (label 1) and CP (label 2), in one mask (see
 [segmentation_protocol.md](segmentation_protocol.md)).
 
-**Images:** most subjects were scanned twice in the same session, so a subject
-folder holds each acquisition as `run_1` and `run_2`. A few subjects have only
-`run_1`, and a few also have `run_3`. Each run comes as two images of the same
-acquisition:
+**Images:** each NM acquisition of a subject is a run, so a subject scanned more
+than once has `run_1`, `run_2` and so on, and one scanned once has only `run_1`.
+Each run comes as two images of the same acquisition:
 
-- `image_run_<N>_combo.nii.gz`: the combined echoes, as in Phase 5 (SNIT
-  Calibration), with the same contrast and brush adjustments.
+- `image_run_<N>_combo.nii.gz`: the combined echoes, as in Phase 5
+  (Calibration), with the same contrast and brush adjustments.
 - `image_run_<N>_echo.nii.gz`: Echo 1, the kind of image used in Phases 1 to 4.
   Set its contrast afresh.
 
@@ -45,7 +44,7 @@ For each assigned subject, the rater:
    ITK-SNAP, whichever gives the better contrast (run 2 instead only when run 1
    is unusable).
 2. Creates one segmentation (SN, then CP), blindly, consistent with the Exam
-   and the SNIT calibration, from scratch: a mask is never copied from, or
+   and the calibration, from scratch: a mask is never copied from, or
    loaded onto, another run.
 3. Saves it as **`<INIT>_mask_run_<N>_<image>.nii.gz`**, with the run number and
    the image label (`combo` or `echo`) of the image it was drawn on.
@@ -81,22 +80,6 @@ It also has its unfilled copy, saved before the holes are filled:
 ```
 outputs/<sub-XXXX>/<INIT>_mask_run_1_combo_unfilled.nii.gz
 ```
-
-## Masks saved before the image labels
-
-- Every mask saved before November 10 was drawn on the combined-echo image, so
-  `_combo` was added to the end of its name (`R4_mask_run_1.nii.gz` is now
-  `R4_mask_run_1_combo.nii.gz`). Nothing else in the name, and nothing in the
-  mask, changed.
-- A mask saved as `<INIT>_mask.nii.gz` or `<INIT>_mask_a1.nii.gz` is that
-  subject's run 1 combined-echo mask. `<INIT>_mask_run_1_combo.nii.gz` next to it
-  is a label pointing to it, not a second mask. Do not rename, move or delete these
-  files.
-- The input images were renamed the same way: `image_run_1.nii.gz` is now
-  `image_run_1_combo.nii.gz`. A recent-files entry for an old name will not open,
-  so open the image from the folder instead.
-- A session left open from before the change still saves under the old name. Save
-  to the new name (`File → Save As`) instead.
 
 ## Reliability monitoring
 

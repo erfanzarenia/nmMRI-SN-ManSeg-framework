@@ -102,10 +102,9 @@ def phase_labels(pcfg):
 #   inputs/<sub>/image_run_<N>.nii.gz, outputs/<sub>/<rater>_mask_run_<N>.nii.gz
 # and a phase with `echoes` too offers each run as more than one image, the name
 # ending in the echo label (image_run_1_combo, image_run_1_echo). The rater
-# segments one of them per run, whichever shows the SN best, and says which in
-# the mask name (<rater>_mask_run_1_combo). QC uses a mask only for the run and
-# image in its name; one naming no run or no image is flagged and not used. Masks
-# saved before runs existed have a <rater>_mask_run_1_combo symlink naming them.
+# segments one of them per run segmented, whichever shows the SN best, and says
+# which in the mask name (<rater>_mask_run_1_combo). QC uses a mask only for the
+# run and image in its name; one naming no run or no image is flagged and not used.
 #
 # A "scan" is what gets segmented and compared: the subject (sub-0001) in a
 # single-image phase, the subject and run (sub-0001_run_2) in a multi-run phase,
@@ -420,7 +419,7 @@ def surface_distance_metrics(a, b, spacing, percentile=95):
     hd95 = max(_weighted_percentile(d_ab, w_a, percentile),
                _weighted_percentile(d_ba, w_b, percentile))
     assd = float((d_ab @ w_a + d_ba @ w_b) / (w_a.sum() + w_b.sum()))
-    masd = max(np.average(d_ab, weights=w_a), np.average(d_ba, weights=w_b))
+    masd = (np.average(d_ab, weights=w_a) + np.average(d_ba, weights=w_b)) / 2
     return {"hd": float(hd), "hd95": float(hd95), "assd": assd, "masd": float(masd)}
 
 

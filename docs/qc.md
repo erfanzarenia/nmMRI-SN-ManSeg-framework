@@ -60,23 +60,23 @@ python scripts/run_qc.py phase6 --masks unfilled          # only qc/unfilled/
 
 ## Run check (gate)
 
-In a phase with `runs` (Phase 6), runs are segmented in order: run 1, then run 2,
-and so on. The raters of an overlap subject are then always comparable on the
-runs they share, even when some are further along. `run_qc.py` checks this for
+In a phase with `runs` (Phase 6), masks are only compared on the same run and
+image, so on an overlap subject a rater's mask counts for reliability only where
+another rater has a mask on the same run and image. `run_qc.py` checks this for
 every subject and writes `<phase>/run_check.csv`, a "Run check" section at the
 end of `coverage.md`, a line in every report and the result on the console:
 
-- **FAIL**: on an overlap subject, a rater skipped a run (e.g. saved run 2 but no
-  run 1), so their runs do not line up with the other raters'. This is often a
-  mask saved under the wrong run number; ask the rater which image it was drawn on.
-  With `echoes` (Phase 6) it also fails when a rater segmented another image of a
-  run than the other raters (e.g. run 1 on `_echo` while the others used
-  `_combo`): masks are only compared on the same run and image, so that run cannot
-  be compared. Ask the rater to also segment the image the others used. Each line
-  lists the runs with their image, e.g. `run 1 combo, 2 echo`.
-- **Check**: a skipped run on a subject only that rater has, or on an overlap
-  subject where every rater skipped the same run (e.g. all have run 2 only), so
-  they still line up. Worth asking whether the run was skipped on purpose.
+- **FAIL**: on an overlap subject, a rater has no run and image in common with
+  any other rater (e.g. run 1 while the others did run 2, or run 1 on `_echo`
+  while the others used `_combo`), so nothing of theirs can be compared. This is
+  often a mask saved under the wrong run number: ask the rater which image it was
+  drawn on, or ask them to also segment the run and image the others used. Each
+  line lists the runs with their image, e.g. `run 1 combo, 2 echo`.
+- **Check**: only when every run is required (no `runs_required`): a skipped run
+  (e.g. run 2 saved but no run 1). Worth asking whether it was skipped on purpose.
+
+With `runs_required: 1`, as in the example configuration, a subject is done once
+any one of its runs has a mask, and runs need not be done in order.
 
 A failing check does not stop QC. The metrics still run, so resolve the listed
 scans before the final analysis.
@@ -131,7 +131,9 @@ own attempts (a_i vs a_j).
 QC never stops for missing or odd files: it computes what it can and notes the
 rest. `coverage.md` shows, per rater and scan, the attempts found (`·` for none,
 `*` for a scan with a note), a per-rater count against the attempts the phase
-expects, and the notes themselves. The same per-rater counts are printed while
+expects (in a phase with `runs`, also the subjects done: with `runs_required`, a
+mask on that many of a subject's runs, else on every run), and the notes
+themselves. The same per-rater counts are printed while
 QC runs, and each report repeats the gaps for its attempt in one line.
 
 In a phase with `runs` (Phase 6), each acquisition is its own scan: tables,
@@ -141,8 +143,8 @@ raters are compared run by run. With `echoes`, a run is offered as two images
 scan in the metrics (`sub-0029_run_1_combo`, `sub-0029_run_1_echo`): a mask is only
 compared with masks of the same run and the same image, never a combined-echo mask
 with an Echo 1 mask. Coverage keeps one row per run and names the image segmented
-(`a1 combo`), and the run check fails an overlap subject whose raters chose
-different images for a run.
+(`a1 combo`), and the run check fails an overlap rater who has no run and image
+in common with any other rater.
 
 A mask counts for the run its name gives: the number after "run", with any
 separator or none and leading zeros allowed (`_run_2`, `_run2`, `_run-02`,
@@ -154,9 +156,8 @@ the name". The image label is read from `_combo` (also `_comb`, `_combined`) or
 `_echo` (also `_echo1`, `_echo-1`), with any separator and in any case. Raters
 must name both the run and the image: a mask without an image label is not used,
 and coverage notes it as "not used, no image (_combo or _echo) in the name". A
-rater who saved both images of one run has a mask on each image's scan. Masks saved before runs were added have a
-`<INIT>_mask_run_1_combo` symlink next to them; that symlink is the run 1 mask, and
-the file it points to is counted once. Runs of a subject usually share one image
+rater who saved both images of one run has a mask on each image's scan. A mask and a symlink to
+it in the same folder count once, under the name that gives the run. Runs of a subject usually share one image
 grid, so the grid check below cannot catch a mask saved under the wrong run: only
 its name says which run it is. A file whose name is not `.nii` or `.nii.gz` (e.g.
 `R7_mask_run_2_echo2nii.gz`) is not read at all and is noted as "not used, not a
@@ -186,8 +187,8 @@ from the source data through the private key (raters never get it in blind
 phases); a copy in a rater's `inputs/` is used only if the key or the source is
 unavailable. No source ID or file name appears in the QC outputs. Surface distances are
 measured between the voxel faces on each mask's boundary, weighted by face
-area, not between voxel centres, so they are not pinned to the 1 mm slice
-thickness and can fall below 1 mm.
+area, not between voxel centres, so they are not pinned to the slice
+thickness and can fall below one voxel.
 
 | Area            | Script            | Output                                                        |
 |-----------------|-------------------|---------------------------------------------------------------|
@@ -234,7 +235,7 @@ boundary to reproduce.
 
 ### Calibration verdict (Phase 5)
 
-The SNIT calibration has a `criteria` block in `phases.yaml`, so its checks also
+The calibration phase has a `criteria` block in `phases.yaml`, so its checks also
 write `verdict.csv` and `verdict.md`: one line per rater with masks, `pass` only
 when all four criteria hold.
 
@@ -245,10 +246,11 @@ when all four criteria hold.
 | `sn_volume`    | abs(`sn_volume_ratio` − 1) ≤ `sn_volume_tol` (0.30) on ≥ `min_scans` (4) scans |
 | `cp_reference` | abs(`cp_mean_dev`) ≤ `cp_mean_tol` (0.05) on ≥ `min_scans` scans |
 
-The thresholds sit near the edge of the agreement raters already reach (pooled
-Phase 1–2 QC, July 2026: inter-rater SN Dice 0.67 ± 0.06, HD95 2.1 ± 0.9 mm),
-so they catch real shifts rather than normal variation; the volume rule targets
-the systematic over- or under-segmentation a contrast change tends to cause.
+Set the thresholds near the agreement your raters already reach in the earlier
+phases (the pooled inter-rater Dice and HD95 in `summary/overall_qc_report.md`),
+so they catch real shifts rather than normal variation; the example values are
+a starting point. The volume rule targets the systematic over- or
+under-segmentation a contrast change tends to cause.
 `review_scans` lists the scans behind each missed criterion. The rater
 re-segments only those, as `<INIT>_mask_a2.nii.gz`, and the re-check runs on
 each rater's latest mask:
@@ -262,18 +264,6 @@ IDs; those also listed in `overlap_subjects` are production overlap subjects as
 well, so every rater segments them again in Phase 6. The production masks are the ones used for
 analysis.
 
-## Quick checks
-
-For a fast Dice-only look at one phase (latest attempt per rater, found the same
-way as above), without figures or reports:
-
-```bash
-python scripts/qc_metrics.py --phase phase4           # dice_pairwise, dice_rater_vs_expert, volumes
-python scripts/interrater_analysis.py --phase phase4  # summary_*.csv, worst subjects first
-```
-
-Both write to `<qc_output_root>/<phase>/`, i.e. into the current run's folder.
-
 ## Which phase to QC
 
 - **Phase 2 (Practice)**: rater-vs-expert calibration (shared, has expert
@@ -284,9 +274,9 @@ Both write to `<qc_output_root>/<phase>/`, i.e. into the current run's folder.
   protocol flags are fed back before the Exam.
 - **Phase 4 (Exam)**: inter-rater reliability (shared, blind). The primary QC
   target, for SN (metrics) and CP (protocol checks).
-- **Phase 5 (SNIT calibration)**: shared, blind, on SNIT combined-echo images;
-  the calibration verdict gates production.
+- **Phase 5 (Calibration)**: shared, blind, on the production images; the
+  calibration verdict gates production.
 - **Phase 6 (Production)**: partitioned, so pairwise Dice is computed only on
-  the hidden overlap (about 10% of subjects, given to every rater), giving an
+  the hidden overlap (the `overlap` subjects, given to every rater), giving an
   ongoing reliability check on the production data. Volumes cover the rest as a
   distribution sanity check, and the protocol checks cover every mask.

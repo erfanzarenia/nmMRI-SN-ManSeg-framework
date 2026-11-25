@@ -129,7 +129,7 @@ def methods(label=1):
         f"(ASSD), were computed on {target} at each scan's native voxel spacing. "
         "Surfaces are the voxel faces on each mask's boundary, weighted by face "
         "area, so distances are measured on the boundary itself rather than "
-        "between voxel centres and are not tied to the 1 mm slice thickness. "
+        "between voxel centres and are not tied to the slice thickness. "
         "Each segmentation attempt (`a1`, `a2`, …) is analyzed independently; the "
         "**attempts-average** is the mean of the per-attempt metrics for each "
         "scan/rater (`n_attempts` = how many were averaged), mirroring every other "
@@ -244,17 +244,36 @@ def run_check_report(phase_key, gate, path):
     return console, note
 
 
-def attempt_note(cov, attempt):
+def attempt_note(cov, attempt, runs_required=None):
     """One line for a report: which raters lack `attempt` (None: any expected
-    attempt, for the attempts-average) on some of their scans."""
+    attempt, for the attempts-average) on some of their scans. In a multi-run
+    phase it counts subjects instead: a subject lacks it unless `runs_required`
+    of its runs have it (every run when None)."""
     scans = cov[cov["subject"] != ROOT_ROW]
+    multi = len(scans) > 0 and all(utils.split_scan(s)[1] is not None for s in scans["subject"])
     gaps = []
     for r, g in scans.groupby("rater", sort=False):
-        n = (sum(attempt not in f.split(",") for f in g["found"]) if attempt
-             else sum(bool(m) for m in g["missing"]))
-        if n:
-            gaps.append(f"{r} {n}/{len(g)}")
+        has = [attempt in f.split(",") if attempt else not m
+               for f, m in zip(g["found"], g["missing"])]
+        if multi:
+            runs = {}                                # subject -> (runs, runs that have it)
+            for s, h in zip(g["subject"], has):
+                n, k = runs.get(utils.split_scan(s)[0], (0, 0))
+                runs[utils.split_scan(s)[0]] = (n + 1, k + h)
+            lack, total = sum(k < min(runs_required or n, n) for n, k in runs.values()), len(runs)
+        else:
+            lack, total = sum(not h for h in has), len(g)
+        if lack:
+            gaps.append(f"{r} {lack}/{total}")
     what = f"an {attempt} mask" if attempt else "every expected attempt"
+    if multi:
+        where = ("any one run" if runs_required == 1 else
+                 f"{runs_required} runs" if runs_required else "every run")
+        if not gaps:
+            return f"Coverage: every rater has {what} on {where} of every subject."
+        return (f"Coverage: subjects without {what} on {where}, per rater: "
+                f"{', '.join(gaps)}. They simply do not contribute here; see "
+                "[coverage.md](../../coverage.md).")
     if not gaps:
         return f"Coverage: every rater has {what} for every scan."
     return (f"Coverage: scans without {what}, per rater: {', '.join(gaps)}. They simply "
@@ -517,20 +536,23 @@ def overall_report(phase_findings, overall_tables, qc_root, links=None, label=1)
           f"(Dice {pr.iloc[-1]['dice_mean']:.3f}).")
         A(f"- **Overall weakest rater:** {pr.iloc[0]['rater']} "
           f"(Dice {pr.iloc[0]['dice_mean']:.3f}).")
-        # phase1 -> phase2 trend (phase1 has few subjects, so this is indicative
-        # only; deltas under 0.02 are reported as "stable").
-        trend = {"phase1", "phase2"} <= set(rve["phase"])
-        if trend:
-            A("- _Phase-1 has only ~2 scans/rater, so phase1→phase2 trends are "
-              "indicative, not powered:_")
-        for r in sorted(rve["rater"].unique()) if trend else []:
-            d1 = rve[(rve.rater == r) & (rve.phase == "phase1")]["dice"].mean()
-            d2 = rve[(rve.rater == r) & (rve.phase == "phase2")]["dice"].mean()
-            if not np.isnan(d1) and not np.isnan(d2):
-                delta = d2 - d1
-                trend = ("stable" if abs(delta) < 0.02 else
-                         "improved" if delta > 0 else "declined")
-                A(f"  - **{r}** {trend} (Dice {d1:.3f}→{d2:.3f}, Δ{delta:+.3f}).")
+        # Each rater's mean Dice vs expert per phase, in phase order. A phase with
+        # few scans makes this indicative only; changes under 0.02 count as stable.
+        seq = utils.phase_keys(dict.fromkeys(rve["phase"]))
+        if len(seq) > 1:
+            A("- **Rater vs expert across phases** (mean Dice per phase, n = scans; "
+              "indicative only where a phase has few scans):")
+        for r in sorted(rve["rater"].unique()) if len(seq) > 1 else []:
+            g = rve[rve.rater == r].groupby("phase")["dice"].agg(["mean", "count"])
+            have = [p for p in seq if p in g.index and pd.notna(g.loc[p, "mean"])]
+            if len(have) < 2:
+                continue
+            delta = g.loc[have[-1], "mean"] - g.loc[have[0], "mean"]
+            trend = ("stable" if abs(delta) < 0.02 else
+                     "improved" if delta > 0 else "declined")
+            steps = " → ".join(f"{p} {g.loc[p, 'mean']:.3f} (n={int(g.loc[p, 'count'])})"
+                               for p in have)
+            A(f"  - **{r}** {trend}: {steps}, Δ{delta:+.3f}.")
     all_anom = sum(len(f.get("anomalies", [])) for f in phase_findings.values())
     A(f"- **Data issues across phases:** {all_anom} flag(s) total "
       "(see per-phase inventories).")

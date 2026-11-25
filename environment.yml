@@ -1,11 +1,12 @@
 name: nmmri-manseg
 channels:
   - conda-forge
+# The versions the workflow was tested with.
 dependencies:
-  - python>=3.10
-  - numpy
-  - pandas
-  - nibabel
-  - pyyaml
-  - scipy          # surface-distance / Hausdorff metrics (qc_analysis.py)
-  - matplotlib     # QC figures and worst-slice montages (qc_visualize.py)
+  - python=3.12
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - nibabel=5.2.1
+  - pyyaml=6.0.2
+  - scipy=1.14.0       # surface-distance / Hausdorff metrics (qc_analysis.py)
+  - matplotlib=3.9.2   # QC figures and slice montages (qc_visualize.py)

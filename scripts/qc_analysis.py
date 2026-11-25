@@ -25,7 +25,7 @@ separator or none (run_2, run-02, Run 2, run2), else the one number left once th
 attempt (a1), echo (echo1) and subject (sub-0029) tokens are set aside
 (R4_mask_2). It counts for the image its name gives (_combo or _echo, any
 separator). A file naming no run, several runs or no image is flagged and not
-used. A <rater>_mask_run_1_combo symlink to an older mask is that mask, once.
+used. A mask and a symlink to it in the same folder count once.
 
 Fill-aware: a rater may also save the mask as it was before its holes were
 filled, with "_unfilled" in the name (R4_mask_run_1_combo_unfilled). Those masks
@@ -141,9 +141,9 @@ def _echo_of(p):
 def _of_run(files, run):
     """The masks of one run among a subject's NIfTI files, and the files naming no
     run. Only a mask whose name gives the run (see _run_match) is used for it; a
-    file with no run in its name is never assumed to be any run. Files that are
-    the same file as a run-named one (an older mask has a run 1 label symlinked
-    to it) are dropped from both lists."""
+    file with no run in its name is never assumed to be any run. Names that are one
+    file (a symlink and its target) count once: under the name that gives the
+    run, and never as a file naming no run."""
     named = {p.resolve() for p in files if _run_of(p) is not None}
     kept, seen = [], set()
     for p in files:

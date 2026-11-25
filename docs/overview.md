@@ -10,12 +10,12 @@ previous one; later phases are not opened until the earlier ones are complete.
 
 - Early phases (1–2): learning and calibration against expert masks.
 - Middle phases (3–4): a blind rehearsal, then the reliability measurement.
-- Bridge phase (5): calibration on SNIT production images (combined echoes).
+- Bridge phase (5): calibration on the production images (here combined echoes).
 - Final phase (6): generation of the research dataset at scale.
 
 In one line: phase 1 learns what correct looks like, phase 2 calibrates, phase 3
-rehearses blind, phase 4 measures reliability, phase 5 transfers to SNIT images,
-phase 6 scales.
+rehearses blind, phase 4 measures reliability, phase 5 transfers to the production
+images, phase 6 scales.
 
 ## Phases
 
@@ -25,7 +25,7 @@ phase 6 scales.
 | 2     | Practice         | labeled | yes         | SN      | `<INIT>_mask_a1/a2` | shared      |
 | 3     | Mock exam        | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
 | 4     | Exam             | labeled | no          | SN + CP | `<INIT>_mask`       | shared      |
-| 5     | SNIT calibration | study   | no          | SN + CP | `<INIT>_mask`       | shared      |
+| 5     | Calibration      | study   | no          | SN + CP | `<INIT>_mask`       | shared      |
 | 6     | Production       | study   | no          | SN + CP | `<INIT>_mask_run_N_combo`, `_echo` | partitioned |
 
 - **shared**: every rater segments the same subjects (enables inter-rater
@@ -34,8 +34,8 @@ phase 6 scales.
   segmented once), with a hidden overlap kept for reliability (see Phase 6).
 - **labeled** vs **study**: two disjoint subject pools that live in different
   places. The labeled (training) set has expert masks and Echo 1 images; the
-  SNIT study set has no expert masks and combined-echo images (plus Echo 1 in
-  Phase 6). Each is a *pool*
+  study set has no expert masks and, in the example configuration, combined-echo
+  images (plus Echo 1 in Phase 6). Each is a *pool*
   in [`config/paths.yaml`](../config/paths.yaml).
 - **SN / CP**: label 1 = substantia nigra; label 2 = cerebral peduncle, a
   reference region added from Phase 3 (Phases 1–2 are SN-only). One mask file
@@ -57,8 +57,8 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
   in the expert-guided phases). Rater outputs are `<INIT>_mask.nii.gz` (single
   attempt) or `<INIT>_mask_a1.nii.gz … _aN.nii.gz` (multiple attempts), each
   holding every label of the phase.
-- Phase 6 has two images per NM acquisition (run 1, for most subjects run 2, for a
-  few also run 3): the combined echoes, `image_run_N_combo.nii.gz`, and Echo 1,
+- Phase 6 has two images per NM acquisition (run 1, then run 2 and so on for a
+  subject scanned more than once): the combined echoes, `image_run_N_combo.nii.gz`, and Echo 1,
   `image_run_N_echo.nii.gz`. One run per subject is enough (run 1, another only
   when run 1 is unusable), segmented once, on whichever image shows the SN better:
   `<INIT>_mask_run_N_combo.nii.gz` or `<INIT>_mask_run_N_echo.nii.gz`.
@@ -74,7 +74,8 @@ Phase guides: [phase1](phase1.md) · [phase2](phase2.md) · [phase3](phase3.md) 
 
 `make_workspace.py` builds this tree under `workspace_root` (outside the repo),
 identically for every phase, and copies the rater-facing guides into a shared
-`docs/` folder so they sit next to the data:
+`docs/` folder so they sit next to the data (a group's own version of a guide,
+in `config/local/docs/`, is copied instead of the one here):
 
 ```
 <workspace_root>/
@@ -94,8 +95,8 @@ identically for every phase, and copies the rater-facing guides into a shared
 conda env create -f environment.yml
 conda activate nmmri-manseg
 
-# 1. Configure config/: paths.yaml (pools + workspace), raters.json,
-#    phases.yaml, and the subject lists.
+# 1. Copy config/ to config/local/ and edit paths.yaml (pools + workspace),
+#    raters.json, phases.yaml and the subject lists.
 # 2. Assign subjects to phases/raters (seed from phases.yaml). Append-only:
 #    re-running allocates new phases and never moves existing assignments.
 python scripts/split_subjects.py
@@ -121,5 +122,5 @@ These apply throughout and are repeated in every phase guide:
 - **A rater stays in their own folder.** A rater never opens, browses, or copies
   from another rater's directories. segmentations are produced independently.
 - A rater works only within their own rater folder, identified by initials.
-- External or expert labels are not sought on the server.
+- External or expert labels are not sought, on shared drives or anywhere else.
 - Files inside `inputs/` are never modified.

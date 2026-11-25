@@ -15,7 +15,7 @@ attempt this writes, under <qc-root>/<phase>/<a<N>|latest>/protocol/:
                             / scan median, CP mean intensity deviation from the
                             scan median, contrast minus the scan median
     verdict.csv/.md         only for a phase with `criteria` in phases.yaml
-                            (SNIT calibration): pass/review per rater and the
+                            (the calibration): pass/review per rater and the
                             scans behind each missed criterion
 
 run_qc.py runs these checks for every attempt of a phase that segments CP;
@@ -148,6 +148,8 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
     prot, agree = [], []
     for sub in utils.find_subjects(phase_dir, raters):
         assigned = [r for r in raters if utils.input_image(phase_dir, r, sub)]
+        if not assigned:                             # no input image for this scan
+            continue
         image_path = utils.input_image(phase_dir, assigned[0], sub)
         image = affine = zooms = None
         masks, rows = {}, {}
@@ -157,6 +159,8 @@ def compute_protocol(phase_key, workspace, phases, raters, attempt=1, out_dir=No
                 path = found[max(found)] if found else None
             else:
                 path = found.get(attempt)
+            if path is None and utils.split_scan(sub)[1] is not None:
+                continue            # a run or image not segmented; coverage.md lists those
             row = tag | {"subject": sub, "rater": r, "mask": path.name if path else "(missing)"}
             if path is None or image_path is None:
                 prot.append(row | {"flags": "mask missing" if path is None else "image missing"})

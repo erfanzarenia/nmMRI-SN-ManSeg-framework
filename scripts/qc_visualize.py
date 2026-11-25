@@ -9,12 +9,14 @@ qc_analysis.py (and reloading the masks/images for the slice views):
                    (HD95 + max HD), rater-vs-expert; bar summaries per rater
                    and per rater-pair.
 
-  Worst slices     for each scan x rater, the three axial slices with the
-                   lowest per-slice Dice against the expert, shown as the NM
-                   image with the rater (top row) and expert (bottom row)
-                   segmentations overlaid, annotated with slice/Dice/HD.
+  Slice montages   for each scan x rater, the three axial slices with the
+                   lowest (top row) and the three with the highest (bottom
+                   row) per-slice Dice against the expert, and every slice
+                   holding SN in a second figure; each panel shows the NM
+                   image with the rater and expert contours overlaid.
 
-Importable; run_qc.py calls generate_phase_figures() / worst_slices_for_phase().
+Importable; run_qc.py calls generate_agreement_figures(), worst_slices_for_phase()
+and all_slices_for_phase().
 Standalone it renders both for one phase:
 
     python scripts/qc_visualize.py --phase phase1
@@ -37,20 +39,28 @@ import qc_analysis as qa
 
 # Consistent identity colors across every figure: "colors" (rater -> color) and
 # "pair_colors" ("A-B" -> color) in raters.json, when given; any other rater
-# takes a tab10 color by its place in the rater list.
-def _config_colors():
+# takes a tab10 color by its place in the rater list. use_config() reads them
+# from a config directory (utils.CONFIG_DIR until a script calls it).
+RATER_COLORS, PAIR_COLORS = {}, {}
+
+
+def use_config(config_dir=None):
+    """Take the rater and pair colors from <config_dir>/raters.json."""
     try:
-        cfg = utils.load_json(utils.CONFIG_DIR / "raters.json")
+        cfg = utils.load_json(Path(config_dir or utils.CONFIG_DIR) / "raters.json")
     except (OSError, ValueError):
         cfg = {}
     tab = [matplotlib.colors.to_hex(c) for c in plt.get_cmap("tab10").colors]
     fixed = dict(cfg.get("colors", {}))
     for i, r in enumerate(cfg.get("raters", [])):
         fixed.setdefault(r, tab[i % len(tab)])
-    return fixed, dict(cfg.get("pair_colors", {}))
+    RATER_COLORS.clear()
+    RATER_COLORS.update(fixed)
+    PAIR_COLORS.clear()
+    PAIR_COLORS.update(cfg.get("pair_colors", {}))
 
 
-RATER_COLORS, PAIR_COLORS = _config_colors()
+use_config()
 MEAN_COLOR = "#111111"
 RATER_OVERLAY = RATER_COLORS                     # contour color per rater in montages
 EXPERT_COLOR = "#ffb000"
@@ -424,6 +434,7 @@ def main():
     args = ap.parse_args()
 
     paths, phases, raters = utils.load_config(args.config_dir)
+    use_config(args.config_dir)
     workspace = args.workspace or Path(paths["workspace_root"])
     qc_root = args.qc_root or Path(paths["qc_output_root"])
     phase_dir = workspace / utils.phase_dirname(args.phase, phases[args.phase])

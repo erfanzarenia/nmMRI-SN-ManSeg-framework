@@ -3,16 +3,17 @@
 
 Writes, next to the split key (git-ignored; they hold source IDs, never share
 them with raters):
-  config/<phase>_assignments.csv   per subject: raters, overlap, runs, who started
-  config/<phase>_acquisitions.csv  per scan (run, and echo label with `echoes`):
-                                   source file and its checksum
-  config/<phase>_output_labels.csv per mask labeled run 1: the file it points to
+  <config-dir>/<phase>_assignments.csv   per subject: raters, overlap, runs, who
+                                         started, and its `balance_by` group
+  <config-dir>/<phase>_acquisitions.csv  per scan (run, and echo label with
+                                         `echoes`): source file and its checksum
 
 Then checks the workspace against the split, reads only, and exits non-zero on a
 problem: every subject assigned, the overlap with every rater, loads balanced,
 each rater's folders matching their assignment, every acquisition in place and
 byte-identical to its own source file, no scan duplicated across subjects or runs,
-and no mask outside its rater's assignment.
+and no mask outside its rater's assignment. Mask names are checked by QC:
+coverage.md notes any mask whose name gives no run or image.
 
     python scripts/phase_manifest.py phase6
     python scripts/phase_manifest.py phase6 --check-only
@@ -20,7 +21,6 @@ and no mask outside its rater's assignment.
 import argparse
 import csv
 import hashlib
-import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -61,11 +61,15 @@ def main():
         ap.error(f"{args.phase} is not a partitioned phase with `runs` in phases.yaml")
     pdef = paths["pools"][pcfg["pool"]]
     info = utils.read_subject_info(args.config_dir / pdef["subjects"])
+    col = pcfg.get("balance_by")                     # e.g. age_group; None when unset
     mapping, by_rater = split["mapping"], entry["by_rater"]
     overlap = set(entry.get("overlap", []))
     subjects = entry["subjects"]
     phase_dir = Path(args.workspace or paths["workspace_root"]) / utils.phase_dirname(args.phase, pcfg)
     problems = []
+
+    def group(w):
+        return info.get(mapping[w], {}).get(col, "") if col else ""
 
     # Assignment.
     assigned = Counter(w for v in by_rater.values() for w in v)
@@ -75,7 +79,7 @@ def main():
     problems += [f"overlap {w} is not with {r}" for w in overlap for r, v in by_rater.items()
                  if w not in v]
     loads = {r: len(v) for r, v in by_rater.items()}
-    if max(loads.values()) - min(loads.values()) > 1:
+    if loads and max(loads.values()) - min(loads.values()) > 1:
         problems.append(f"loads differ by more than one: {loads}")
 
     # Sources: which file is each run (and echo image) of each subject. An echo
@@ -120,61 +124,52 @@ def main():
             for e in echoes if (w, run, e) in sources]
     with ThreadPoolExecutor(8) as ex:
         problems += [p for p in ex.map(in_place, jobs) if p]
-    labels, started = [], {}
+    started = {}
     for r, v in by_rater.items():
         inputs = phase_dir / r / "inputs"
         have = {p.name for p in inputs.glob("sub-*")}
         problems += [f"{r}/{w}: folder not in the assignment" for w in sorted(have - set(v))]
         problems += [f"{r}/{w}: folder missing" for w in sorted(set(v) - have)]
         for sub in sorted((phase_dir / r / "outputs").glob("sub-*")):
-            masks = [p for p in sub.iterdir() if p.is_file()]
-            if not masks:
+            if not any(p.is_file() for p in sub.iterdir()):
                 continue
             started.setdefault(sub.name, []).append(r)
             if sub.name not in v:
                 problems.append(f"{r}/{sub.name}: outputs but not assigned")
-            link = sub / f"{r}_mask_run_1.nii.gz"
-            label_names = {link.name, f"{r}_mask_run_1_{echoes[0]}.nii.gz"}
-            for p in masks:
-                if p.is_symlink() and p.name in label_names:
-                    labels.append({"workspace_id": sub.name, "rater": r, "run": 1,
-                                   "label": p.name, "mask": p.readlink().name,
-                                   "sha1": sha1(p)})
-            if not any((sub / n).exists() for n in label_names) and not any(
-                    re.search(r"_run[_-]?\d", p.name) for p in masks):
-                problems.append(f"{r}/{sub.name}: mask not labeled with a run")
 
     # Manifests.
     if not args.check_only:
+        columns = (["workspace_id", "participant"] + ([col] if col else [])
+                   + ["raters", "overlap", "n_runs", "runs", "started_by", "note"])
         rows = [{"workspace_id": w, "participant": mapping[w],
-                 "age_group": info.get(mapping[w], {}).get("age_group", ""),
+                 **({col: group(w)} if col else {}),
                  "raters": " ".join(r for r, v in by_rater.items() if w in v),
                  "overlap": "yes" if w in overlap else "",
                  "n_runs": len(runs_of[w]), "runs": " ".join(map(str, runs_of[w])),
                  "started_by": " ".join(started.get(w, [])),
                  "note": info.get(mapping[w], {}).get("note", "") or ""}
                 for w in sorted(subjects, key=lambda w: (w not in overlap, mapping[w]))]
-        write_csv(args.config_dir / f"{args.phase}_assignments.csv", rows, list(rows[0]))
+        write_csv(args.config_dir / f"{args.phase}_assignments.csv", rows, columns)
         acq = [{"workspace_id": w, "participant": mapping[w], "run": f"run_{run}",
                 "echo": e or "", "source": sources[(w, run, e)], "sha1": checksum[(w, run, e)]}
                for (w, run, e) in sorted(sources, key=lambda k: (k[0], k[1], str(k[2])))]
-        write_csv(args.config_dir / f"{args.phase}_acquisitions.csv", acq, list(acq[0]))
-        write_csv(args.config_dir / f"{args.phase}_output_labels.csv", labels,
-                  ["workspace_id", "rater", "run", "label", "mask", "sha1"])
+        write_csv(args.config_dir / f"{args.phase}_acquisitions.csv", acq,
+                  ["workspace_id", "participant", "run", "echo", "source", "sha1"])
 
     # Summary.
-    n_group = Counter(info.get(mapping[w], {}).get("age_group", "") for w in overlap)
+    by_count = Counter(map(len, runs_of.values()))
     print(f"{args.phase}: {len(subjects)} subjects, {sum(map(len, runs_of.values()))} scans "
-          f"({len(sources)} images) "
-          f"({Counter(map(len, runs_of.values()))} subjects by run count)")
-    print(f"overlap: {len(overlap)} ({100 * len(overlap) / len(subjects):.1f}%), {dict(n_group)}: "
-          f"{', '.join(sorted(overlap))}")
+          f"({len(sources)} images); subjects by run count: "
+          + ", ".join(f"{n} run(s) {k}" for n, k in sorted(by_count.items())))
+    share = f" ({100 * len(overlap) / len(subjects):.1f}%)" if subjects else ""
+    groups = f", {dict(Counter(group(w) for w in overlap))}" if col else ""
+    print(f"overlap: {len(overlap)}{share}{groups}: {', '.join(sorted(overlap))}")
     print(f"{'rater':<6}{'subjects':>9}{'overlap':>9}{'own':>6}{'scans':>7}{'started':>9}")
     for r, v in by_rater.items():
         print(f"{r:<6}{len(v):>9}{len(overlap & set(v)):>9}{len(set(v) - overlap):>6}"
               f"{sum(len(runs_of[w]) for w in v):>7}{sum(r in s for s in started.values()):>9}")
-    print(f"masks labeled run 1: {len(labels)}")
-    for n in sorted(set(map(len, runs_of.values())) - {2}):
+    usual = by_count.most_common(1)[0][0] if by_count else None
+    for n in sorted(set(by_count) - {usual}):
         print(f"subjects with {n} run(s): {', '.join(w for w in subjects if len(runs_of[w]) == n)}")
     for p in problems:
         print(f"PROBLEM: {p}")

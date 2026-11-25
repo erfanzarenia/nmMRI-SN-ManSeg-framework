@@ -6,20 +6,21 @@ the rater does; what to segment is defined in
 
 ## Launch
 
-From a terminal on the server: `itksnap`.
+From a terminal: `itksnap`.
 
 ## Open an image
 
-`File → Open Main Image`, select `image.nii.gz` (Phase 6: for each run, either
-`image_run_<N>_combo.nii.gz` or `image_run_<N>_echo.nii.gz`), then `Open`. The scan appears in axial,
+`File → Open Main Image`, select `image.nii.gz` (Phase 6: `image_run_1_combo.nii.gz` or
+`image_run_1_echo.nii.gz`, another run only when run 1 is unusable), then `Open`. The scan appears in axial,
 sagittal, and coronal views.
 
 ## Adjust visibility
 
 `Tools → Image Contrast` adjusts brightness/contrast until the SN is clearly
 visible without washing out the background. Settings are kept consistent across slices within a subject.
-SNIT `_combo` images (Phases 5–6) combine echoes, so their contrast is set afresh
-rather than reused from Echo 1 images (`_echo` in Phase 6, and Phases 1–4).
+Combined-echo images (`_combo`, Phases 5 and 6) look different from Echo 1 images
+(`_echo` in Phase 6, and Phases 1 to 4), so their contrast is set afresh rather
+than reused.
 
 ## Overlay the expert mask (phases 1–2 only)
 
@@ -56,7 +57,7 @@ the rater's initials. One file holds every label (SN, and CP from Phase 3):
 
 - Phases 3–5 (one attempt): **`<INITIALS>_mask.nii.gz`** (e.g. `R1_mask.nii.gz`).
   A Phase 5 re-segmentation, when requested, is **`<INITIALS>_mask_a2.nii.gz`**.
-- Phase 6 (one mask per run): always end the name with **`_run_<N>_<image>`**,
+- Phase 6 (one mask per subject, on one run): always end the name with **`_run_<N>_<image>`**,
   copied from the image the mask was drawn on: `image_run_1_combo.nii.gz` gives
   **`<INITIALS>_mask_run_1_combo.nii.gz`**, `image_run_1_echo.nii.gz` gives
   **`<INITIALS>_mask_run_1_echo.nii.gz`** (see [phase6.md](phase6.md)).
@@ -93,5 +94,5 @@ New to ITK-SNAP: <https://youtu.be/OpYJiY_GoeY>
 
 ## If something breaks
 
-Restart ITK-SNAP and reload the image. Persistent issues are reported to Erfan
-(ezarenia@uwo.ca).
+Restart ITK-SNAP and reload the image. Persistent issues are reported to the
+study coordinator.

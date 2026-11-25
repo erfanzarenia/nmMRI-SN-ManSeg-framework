@@ -190,6 +190,7 @@ def main():
     args = ap.parse_args()
 
     paths, phases, raters = utils.load_config(args.config_dir)
+    qv.use_config(args.config_dir)
     workspace = Path(args.workspace or paths["workspace_root"])
     qc_root = Path(args.qc_root or (workspace / "qc" if args.workspace
                                      else paths["qc_output_root"]))
@@ -262,7 +263,7 @@ def run(todo, variant, qc_root, workspace, phases, raters, paths, split, label):
         for n in attempts:
             tables, findings, path, nf, ns = process_attempt(
                 ph, n, workspace, phases, raters, qc_root, label,
-                with_gate(qr.attempt_note(cov, f"a{n}")), experts)
+                with_gate(qr.attempt_note(cov, f"a{n}", need)), experts)
             per.append(tables)
             folders.append(f"a{n}")
             rep_tables[ph], rep_findings[ph], rep_reports[ph] = tables, findings, path
@@ -273,7 +274,7 @@ def run(todo, variant, qc_root, workspace, phases, raters, paths, split, label):
             repro = qa.compute_attempt_reproducibility(ph, workspace, phases, raters, label)
             avg, findings, path, nf = process_average(
                 ph, per, repro, qc_root, label,
-                with_gate(qr.attempt_note(cov, None)))
+                with_gate(qr.attempt_note(cov, None, need)))
             folders.append(qa.AVERAGE_DIR)
             rep_tables[ph], rep_findings[ph], rep_reports[ph] = avg, findings, path
             print(f"  [{qa.AVERAGE_DIR}] mean of {len(attempts)} attempts, {nf} figures, "

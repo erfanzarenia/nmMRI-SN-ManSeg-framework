@@ -20,8 +20,8 @@ where it is visible. Attention goes to continuity across slices, smooth and
 plausible boundaries, no isolated noisy voxels, and consistency across
 subjects; where a boundary is uncertain, slightly exclusive labeling is
 preferred. The expert masks of Phases 1–2 are the reference for extent and edge
-behavior, and `Substantia_Nigra_Anatomical_Borders.pdf` (workspace `docs/`)
-summarizes the anatomical borders.
+behavior; an anatomical borders guide or atlas, if the group uses one, sits with
+these guides in the workspace `docs/` folder.
 
 ## CP: cerebral peduncle (label 2)
 

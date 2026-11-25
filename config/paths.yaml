@@ -28,8 +28,8 @@ pools:
   # Study set (calibration + production): the NM combined-echo ("combo") image.
   # A pool may span several BIDS datasets, searched in order. `run` is the NM run
   # of a phase using one image per subject; a phase with `runs` in phases.yaml
-  # takes each of those runs instead. image_pattern may list fallbacks (an older
-  # name of the same image). echo_patterns gives the Echo 1 image of each run,
+  # takes each of those runs instead. image_pattern may list fallbacks (e.g.
+  # another file name for the same image in part of the data). echo_patterns gives the Echo 1 image of each run,
   # used by a phase whose `echoes` lists "echo"; it must be on the same grid as
   # the combined image.
   study:

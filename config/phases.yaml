@@ -48,6 +48,12 @@
 #               one simply has fewer. Inputs are inputs/<sub>/image_run_<N>.nii.gz,
 #               masks outputs/<sub>/<rater>_mask_run_<N>.nii.gz. Without it each
 #               subject has one image.nii.gz, of the pool's `run`
+#   echoes      optional, with runs: the images each run is offered as, e.g.
+#               [combo, echo]: image_run_<N>_combo.nii.gz (the pool's
+#               image_pattern) and image_run_<N>_echo.nii.gz (its echo_patterns).
+#               The rater segments one and names it in the mask:
+#               <rater>_mask_run_<N>_combo.nii.gz or _echo.nii.gz
+#   run1_only   optional, with runs: source IDs kept to run 1
 #   runs_required optional, with runs: how many runs a subject needs a mask on to
 #               be done (1: any one run is enough). Without it every run is needed.
 #   labels      labels segmented, all in one mask file (values as in
@@ -97,7 +103,7 @@ phase4:
   labels: [SN, CP]
 
 phase5:
-  name: snit_calibration
+  name: calibration
   pool: study
   # Fixed calibration scans, as source IDs from the pool.
   subjects: [sub-1001, sub-1002, sub-1003, sub-5001, sub-5002]
@@ -117,7 +123,7 @@ phase6:
   pool: study
   n_subjects: all
   assignment: partitioned
-  overlap: 15                   # subjects that go to every rater
+  overlap: 4                    # subjects that go to every rater (or a fraction, e.g. 0.10)
   overlap_subjects: [sub-1001, sub-5001]  # optional: must be in the overlap
   raters: [R1, R2, R3]           # optional: only these raters segment production
   runs: [1, 2]                   # every NM acquisition of a subject
